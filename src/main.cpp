@@ -17,12 +17,11 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <Wire.h>
-#include <Preferences.h>
-#include <MPU6050_light.h>
-#include <RunningAverage.h>
 #include <errno.h>
+#include <MPU6050_Kalman.h>
+#include <freertos/FreeRTOS.h>
 
-// #define __DEBUG__
+#define __DEBUG__
 
 #ifdef __DEBUG__
 	#define DEBUG_PRINT(x) Serial.print(x)
@@ -32,13 +31,9 @@
 	#define DEBUG_PRINTLN(x)
 #endif
 
-MPU6050 mpu(Wire);
 WiFiClient client;
 PubSubClient MQTT(client);
-Preferences preferences;
-RunningAverage tiltAngleX(100);
-RunningAverage tiltAngleY(100);
-RunningAverage tiltAngleZ(100);
+MPU6050_Kalman mpu;
 
 /**
  * @brief Declare the WiFi parameters
@@ -49,7 +44,7 @@ const char *password = "batebola"; 		// WiFi network password
 /**
  * @brief Declare the MQTT parameters
  */
-const char *mqttBroker = "fresnel-pi"; 	// MQTT broker name
+const char *mqttBroker = "mqtt.eclipse.org";	// MQTT broker address
 const int mqttPort = 1883;				// MQTT broker port
 const char *mqttSubsTopic = "controller";
 const char *mqttPubsTopic = "teste";
@@ -73,7 +68,20 @@ const char PIN_SystemFaultLed     = 2;	// System fault LED
 const char PIN_StepperMotorStep   = 27;	// Stepper motor step
 const char PIN_StepperMotorDir    = 14;	// Stepper motor direction
 
-bool isMPU6050Configured = false;
+/**
+ * @brief Declare the system parameters
+ */
+const int STEPPER_MOTOR_STEP_DELAY = 2000; // Stepper motor step delay in microseconds
+const float ABSOLUTE_ANGLE_TOLERANCE = 0.8; // Absolute angle tolerance in degrees
+const int STEPPER_MOTOR_STEPS_AUTO = 100; // Stepper motor steps in automatic mode
+const int MAXIMUM_ANGLE_AUTO = 45; // Maximum angle in automatic mode
+const int MINIMUM_ANGLE_AUTO = -45; // Minimum angle in automatic mode
+
+/**
+ * @brief Declare the global variables
+ */
+float desiredAngle = 0.0;	// Desired angle to move the mirrors
+float currentAngle = 0.0;	// Current angle of the mirrors
 
 /**
  * @brief Setup the GPIO pins
@@ -102,8 +110,8 @@ void setupGPIO(void)
  */
 void setupWiFi(void)
 {
-	//WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK); // Set the minimum security for the WiFi network
-	//WiFi.setHostname("fresnel-esp");  		// Set the hostname for the WiFi network
+	WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK); // Set the minimum security for the WiFi network
+	WiFi.setHostname("fresnel-esp");  		// Set the hostname for the WiFi network
 	WiFi.begin(ssid, password); 			// Connect to the network
 }
 
@@ -125,89 +133,8 @@ bool isCalibrationMode(void)
 
 void setupMPU6050(void)
 {	
-	float accelOffsetX, accelOffsetY, accelOffsetZ;
-	float gyroOffsetX, gyroOffsetY, gyroOffsetZ;
-	
-	tiltAngleX.clear();
-	tiltAngleY.clear();
-	tiltAngleZ.clear();
-
-	Wire.begin();
-	
-	unsigned long startTime = millis();
-	while (mpu.begin() != ERR_OK) {
-		if (millis() - startTime > 10000) {
-			DEBUG_PRINTLN("MPU6050 device not found");
-			return;
-		}
-		delay(500);
-	}
-	
-	mpu.setFilterGyroCoef(0.5);
-
-	preferences.begin("MPU-Calibration");
-
-	if (isCalibrationMode()) {
-		DEBUG_PRINTLN("Calibration Button Pressed");
-
-		mpu.calcOffsets();
-		
-		accelOffsetX = mpu.getAccXoffset();
-		accelOffsetY = mpu.getAccYoffset();
-		accelOffsetZ = mpu.getAccZoffset();
-
-		gyroOffsetX = mpu.getGyroXoffset();
-		gyroOffsetY = mpu.getGyroYoffset();
-		gyroOffsetZ = mpu.getGyroZoffset();
-
-		preferences.putFloat("accelOffsetX", accelOffsetX);
-		preferences.putFloat("accelOffsetY", accelOffsetY);
-		preferences.putFloat("accelOffsetZ", accelOffsetZ);
-
-		preferences.putFloat("gyroOffsetX", gyroOffsetX);
-		preferences.putFloat("gyroOffsetY", gyroOffsetY);
-		preferences.putFloat("gyroOffsetZ", gyroOffsetZ);
-
-		DEBUG_PRINTLN("Calibration Done Successfully");
-		DEBUG_PRINT("Accel Offset X: ");DEBUG_PRINTLN(accelOffsetX);
-		DEBUG_PRINT("Accel Offset Y: ");DEBUG_PRINTLN(accelOffsetY);
-		DEBUG_PRINT("Accel Offset Z: ");DEBUG_PRINTLN(accelOffsetZ);
-		DEBUG_PRINT("Gyro Offset X: ");DEBUG_PRINTLN(gyroOffsetX);
-		DEBUG_PRINT("Gyro Offset Y: ");DEBUG_PRINTLN(gyroOffsetY);
-		DEBUG_PRINT("Gyro Offset Z: ");DEBUG_PRINTLN(gyroOffsetZ);
-	} else {
-		DEBUG_PRINTLN("Calibration Button Not Pressed");
-		/* Check if all nedded keys exists */
-		if (preferences.isKey("accelOffsetX") && preferences.isKey("accelOffsetY") &&
-			preferences.isKey("accelOffsetZ") && preferences.isKey("gyroOffsetX") &&
-			preferences.isKey("gyroOffsetY") && preferences.isKey("gyroOffsetZ")) {
-			/* If all keys exists gets them */
-			accelOffsetX = preferences.getFloat("accelOffsetX");
-			accelOffsetY = preferences.getFloat("accelOffsetY");
-			accelOffsetZ = preferences.getFloat("accelOffsetZ");
-
-			gyroOffsetX  = preferences.getFloat("gyroOffsetX");
-			gyroOffsetY  = preferences.getFloat("gyroOffsetY");
-			gyroOffsetZ  = preferences.getFloat("gyroOffsetZ");
-
-			mpu.setAccOffsets(accelOffsetX, accelOffsetY, accelOffsetZ);
-			mpu.setGyroOffsets(gyroOffsetX, gyroOffsetY, gyroOffsetZ);
-
-			DEBUG_PRINTLN("Offsets restored successfully");
-			DEBUG_PRINT("Accel Offset X: ");DEBUG_PRINTLN(accelOffsetX);
-			DEBUG_PRINT("Accel Offset Y: ");DEBUG_PRINTLN(accelOffsetY);
-			DEBUG_PRINT("Accel Offset Z: ");DEBUG_PRINTLN(accelOffsetZ);
-			DEBUG_PRINT("Gyro Offset X: ");DEBUG_PRINTLN(gyroOffsetX);
-			DEBUG_PRINT("Gyro Offset Y: ");DEBUG_PRINTLN(gyroOffsetY);
-			DEBUG_PRINT("Gyro Offset Z: ");DEBUG_PRINTLN(gyroOffsetZ);
-		} else {
-			DEBUG_PRINTLN("Offsets restored failed");
-		}
-	}
-
-	isMPU6050Configured = true;
-
-	preferences.end();
+	mpu.begin();
+	mpu.runRollCalibration();
 }
 
 /**
@@ -215,22 +142,8 @@ void setupMPU6050(void)
  */
 void readMPU6050()
 {	
-	if (!isMPU6050Configured) {
-		DEBUG_PRINTLN("MPU6050 not configured");
-		return;
-	}
-
-	static unsigned long timer = millis();
-	
-  	if(millis() - timer > 100) {
-		mpu.update();
-
-		tiltAngleX.add(mpu.getAngleX());
-		tiltAngleY.add(mpu.getAngleY());
-		tiltAngleZ.add(mpu.getAngleZ());
-
-		timer = millis();
-	}	
+	mpu.readSensors();
+	currentAngle = mpu.getRollAngle();	
 }
 
 /**
@@ -240,15 +153,13 @@ void printAngles(void) {
 	static unsigned long timer = millis();
 	
   	if(millis() - timer > 1000) {
-		DEBUG_PRINT("X: ");DEBUG_PRINTLN(tiltAngleX.getAverage());
-		DEBUG_PRINT("Y: ");DEBUG_PRINTLN(tiltAngleY.getAverage());
-		DEBUG_PRINT("Z: ");DEBUG_PRINTLN(tiltAngleZ.getAverage());
+		DEBUG_PRINT("Roll Angle: ");DEBUG_PRINTLN(currentAngle);
 		timer = millis();
-	}	
+	}
 }
 
 /**
- * @brief Check the WiFi status
+ * @brief Check the WiFi status and reconnect if necessary
  */
 void checkWiFiStatus(void)
 {
@@ -274,7 +185,7 @@ void checkWiFiStatus(void)
  * @param pin The pin to pulse
  * @param period The period time
 */
-void pulsePin(int pin, int period = 20000)
+void pulsePin(int pin, int period = STEPPER_MOTOR_STEP_DELAY)
 {
 	digitalWrite(pin, HIGH);
 	delayMicroseconds(period/2);
@@ -373,10 +284,91 @@ bool isAnyFaultDetected(void)
 	}
 }
 
+/**
+ * @brief Callback function when MQTT message is received
+ * @param topic The MQTT topic
+ * @param message The message content
+ */
+void mqttCallback(char* topic, byte* message, unsigned int length) {
+    char msg[length + 1];
+    for (int i = 0; i < length; i++) {
+        msg[i] = (char)message[i];
+    }
+    msg[length] = '\0';
+
+    desiredAngle = atof(msg);
+
+	if (desiredAngle > MAXIMUM_ANGLE_AUTO) {
+		desiredAngle = MAXIMUM_ANGLE_AUTO;
+	} else if (desiredAngle < MINIMUM_ANGLE_AUTO) {
+		desiredAngle = MINIMUM_ANGLE_AUTO;
+	}
+
+    DEBUG_PRINT("Received Sun Position: ");
+    DEBUG_PRINTLN(desiredAngle);
+}
+
 void setupMQTT(void)
 {
 	MQTT.setServer(mqttBroker, mqttPort);
 	MQTT.subscribe(mqttSubsTopic);
+	MQTT.setCallback(mqttCallback);
+}
+
+/**
+ * @brief Check the MQTT status and reconnect if necessary
+ */
+void checkMQTT(void)
+{
+	MQTT.loop();
+
+    if (!MQTT.connected()) {
+        DEBUG_PRINTLN("MQTT not connected, reconnecting...");
+        if (MQTT.connect("FresnelController")) {
+            MQTT.subscribe(mqttSubsTopic);
+            DEBUG_PRINTLN("MQTT connected");
+        } else {
+            DEBUG_PRINTLN("MQTT connection failed, retrying...");
+        }
+    }
+}
+
+/**
+ * @brief Move the mirrors to the desired position
+ */
+void moveMirrorsToPosition(void)
+{
+	float minAcceptableAngle = desiredAngle - ABSOLUTE_ANGLE_TOLERANCE;
+	float maxAcceptableAngle = desiredAngle + ABSOLUTE_ANGLE_TOLERANCE;
+
+	if (currentAngle >= minAcceptableAngle && currentAngle <= maxAcceptableAngle) {
+		DEBUG_PRINTLN("Mirrors are already in the desired position");
+		return;
+	}
+
+	if (currentAngle > MAXIMUM_ANGLE_AUTO - ABSOLUTE_ANGLE_TOLERANCE || 
+		currentAngle < MINIMUM_ANGLE_AUTO + ABSOLUTE_ANGLE_TOLERANCE) {
+		DEBUG_PRINTLN("Mirrors are in the limit position");
+		return;
+	}
+
+	DEBUG_PRINT("Desired Angle: ");DEBUG_PRINT(desiredAngle);DEBUG_PRINT(" | Current Angle: ");DEBUG_PRINTLN(currentAngle);
+
+	if (desiredAngle > currentAngle) {
+		DEBUG_PRINTLN("Moving motor CW");
+    	for (int i = 0; i < STEPPER_MOTOR_STEPS_AUTO; i++) {         
+			turnStepperMotorCW();
+        }
+		return;
+    } 
+	
+	if (desiredAngle < currentAngle) {
+        DEBUG_PRINTLN("Moving motor CCW");
+        for (int i = 0; i < STEPPER_MOTOR_STEPS_AUTO; i++) {
+			turnStepperMotorCCW();
+		}
+		return;
+    }
 }
 
 /**
@@ -400,9 +392,9 @@ void setup(void)
  */
 void loop(void)
 {
-	// readMPU6050();
+	checkWiFiStatus();
 
-	// printAngles();
+	checkMQTT();
 
 	if (isManualMode()) { /* Manual Mode */
 		DEBUG_PRINTLN("Manual Mode");
@@ -432,6 +424,8 @@ void loop(void)
 		}
 	} else { /* Automatic Mode */
 		DEBUG_PRINTLN("Automatic Mode");
+		readMPU6050();
+		moveMirrorsToPosition();
 	}
 }
 
