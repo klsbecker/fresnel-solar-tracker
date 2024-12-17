@@ -198,6 +198,12 @@ void pulsePin(int pin, int period = STEPPER_MOTOR_STEP_DELAY)
  */
 void turnStepperMotorCW(void)
 {
+	if(isLeftLimitSwitchPressed()) {
+		DEBUG_PRINTLN("Left Limit Switch Pressed");
+		blinkLedFault();
+		return;
+	}
+	DEBUG_PRINTLN("Turning Motor CW");
 	pulsePin(PIN_StepperMotorStep);
 }
 
@@ -206,6 +212,12 @@ void turnStepperMotorCW(void)
  */
 void turnStepperMotorCCW(void)
 {
+	if(isRightLimitSwitchPressed()) {
+		DEBUG_PRINTLN("Right Limit Switch Pressed");
+		blinkLedFault();
+		return;
+	}
+	DEBUG_PRINTLN("Turning Motor CCW");
 	pulsePin(PIN_StepperMotorDir);
 }
 
@@ -403,24 +415,12 @@ void loop(void)
 			return;
 		}
 
-		if (isCWButtonPressed()){
-			if (isLeftLimitSwitchPressed()) {
-				DEBUG_PRINTLN("Left Limit Switch Pressed");
-				blinkLedFault();
-			} else {
-				DEBUG_PRINTLN("Turning CW ->");
-				turnStepperMotorCW();
-			}
+		if (isCWButtonPressed()) {
+			turnStepperMotorCW();
 		}
 		
 		if (isCCWButtonPressed()) {
-			if (isRightLimitSwitchPressed()) {
-				DEBUG_PRINTLN("Right Limit Switch Pressed");
-				blinkLedFault();
-			} else {
-				DEBUG_PRINTLN("Turning CCW <-");
-				turnStepperMotorCCW();
-			}
+			turnStepperMotorCCW();
 		}
 	} else { /* Automatic Mode */
 		DEBUG_PRINTLN("Automatic Mode");
