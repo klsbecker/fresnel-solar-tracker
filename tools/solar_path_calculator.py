@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import ephem
 import pytz
 from datetime import datetime, timedelta
