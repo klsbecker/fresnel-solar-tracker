@@ -3,6 +3,8 @@ import pytz
 from datetime import datetime, timedelta
 import numpy as np
 import matplotlib.pyplot as plt
+import paho.mqtt.client as mqtt
+import time
 
 """
 Linear Fresnel Solar Tracker
@@ -24,6 +26,23 @@ graph with sunrise and sunset markers.
 LONGITUDE = '-51.15282805318066'
 LATITUDE = '-29.792892732889147'
 TIMEZONE = 'America/Sao_Paulo'
+MQTT_BROKER = '192.168.16.115'  # Replace with your MQTT broker address
+MQTT_PORT = 1883
+MQTT_TOPIC = 'desired-angle'
+
+
+# MQTT client setup
+client = mqtt.Client()
+
+def on_connect(client, userdata, flags, rc):
+    """Callback for successful MQTT connection"""
+    print(f"Connected to MQTT broker with result code {rc}")
+    client.subscribe(MQTT_TOPIC)
+
+client.on_connect = on_connect
+
+# Connect to the broker
+client.connect(MQTT_BROKER, MQTT_PORT, 60)
 
 def calculate_solar_angles(lat, lon, local_datetime, timezone_str=None):
     """
@@ -130,14 +149,25 @@ def get_current_solar_angles(lat, lon, timezone_str=None):
     
     return elevation, azimuth
 
+def publish_solar_angles(lat, lon, timezone_str=None):
+    """Publish current solar angles to MQTT topic every 1 minute"""
+    while True:
+        # Get current solar angles
+        current_elevation, current_azimuth = get_current_solar_angles(lat, lon, timezone_str)
+
+        # Publish the angles as a message in JSON format
+        message = f'{{"elevation": {current_elevation:.2f}, "azimuth": {current_azimuth:.2f}}}'
+        print(message)
+
+        client.publish(MQTT_TOPIC, message)
+        
+        # Wait for 1 minute
+        time.sleep(60)
+
 # Main script execution
 if __name__ == "__main__":
-    # Get the current solar angles
-    current_elevation, current_azimuth = get_current_solar_angles(LATITUDE, LONGITUDE, TIMEZONE)
+    # Start MQTT client loop in a separate thread
+    client.loop_start()
 
-    # Print the current solar angles
-    print(f'Current elevation angle: {current_elevation:.2f} degrees')
-    print(f'Current azimuth angle: {current_azimuth:.2f} degrees')
-
-    # Generate the solar angle graph for the current day
-    plot_solar_angles(LATITUDE, LONGITUDE, datetime.now(), TIMEZONE)
+    # Start publishing solar angles
+    publish_solar_angles(LATITUDE, LONGITUDE, TIMEZONE)
