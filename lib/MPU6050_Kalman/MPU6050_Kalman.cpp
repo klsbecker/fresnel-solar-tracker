@@ -26,6 +26,10 @@ void MPU6050_Kalman::runRollCalibration(uint16_t samples) {
     _rateCalibrationRoll /= samples;
 }
 
+void MPU6050_Kalman::setRollCalibration(float calibration) {
+    _rateCalibrationRoll = calibration;
+}
+
 float MPU6050_Kalman::getRollCalibration() {
     return _rateCalibrationRoll;
 }
@@ -40,11 +44,11 @@ void MPU6050_Kalman::readSensors() {
     int16_t accYLSB = Wire.read() << 8 | Wire.read();
     int16_t accZLSB = Wire.read() << 8 | Wire.read();
 
-    _accX = (float)accXLSB / 4096.0;
-    _accY = (float)accYLSB / 4096.0;
-    _accZ = (float)accZLSB / 4096.0;
+    _accX = (float)accXLSB / 4096.0 - 0.1;
+    _accY = (float)accYLSB / 4096.0 + 0.078;
+    _accZ = (float)accZLSB / 4096.0 - 0.1;
 
-    _angleRoll = atan(_accY / sqrt(_accX * _accX + _accZ * _accZ)) * RAD_TO_DEG;
+    _angleRoll = atan(_accX / sqrt(_accY * _accY + _accZ * _accZ)) * RAD_TO_DEG;
 
     Wire.beginTransmission(_addr);
     Wire.write(0x43);
