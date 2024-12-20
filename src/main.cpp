@@ -19,7 +19,6 @@
 #include <Wire.h>
 #include <errno.h>
 #include <MPU6050_Kalman.h>
-#include <freertos/FreeRTOS.h>
 
 #define __DEBUG__
 
@@ -31,30 +30,34 @@
 	#define DEBUG_PRINTLN(x)
 #endif
 
-WiFiClient client;
-PubSubClient MQTT(client);
+WiFiClient WifiClient;
+PubSubClient MQTTClient(WifiClient);
 MPU6050_Kalman mpu;
 
 /**
  * @brief Declare the WiFi parameters
  */
-const char *ssid = "iPhone de Klaus"; 	// WiFi network name
-const char *password = "batebola"; 		// WiFi network password
- 
+const char *ssid = "fresnel-pi"; 			// WiFi network name
+const char *password = "12345678"; 			// WiFi network password
+const char *hostname = "fresnel-esp"; 		// WiFi network hostname
+const IPAddress ipaddr(4, 3, 2, 2); 		// WiFi network IP address
+const IPAddress gateway(4, 3, 2, 1); 		// WiFi network gateway
+const IPAddress subnet(255, 255, 255, 0); 	// WiFi network subnet
+
 /**
  * @brief Declare the MQTT parameters
  */
-const char *mqttBroker = "mqtt.eclipse.org";	// MQTT broker address
-const int mqttPort = 1883;				// MQTT broker port
-const char *mqttSubsTopic = "fresnel-solar-tracker-unisinos/desired-angle";
-const char *mqttPubsTopic = "teste";
+const int mqttPort = 1883;					// MQTT broker port
+const char *mqttBroker = "4.3.2.1";			// MQTT broker address
+const char *mqttSubsTopic = "desired-angle";// MQTT subscription topic
+const char *mqttPubsTopic = "current-angle";// MQTT publication topic
 
 /**
  * @brief Declare the INPUT pins
  */
 const char PIN_ManualModeSwitch  = 12;	// Manual mode switch
-const char PIN_ManualCWButton  = 32;	// Manual CW button
-const char PIN_ManualCCWButton = 33;	// Manual CCW button
+const char PIN_ManualCWButton    = 32;	// Manual CW button
+const char PIN_ManualCCWButton   = 33;	// Manual CCW button
 const char PIN_LeftLimitSwitch   = 25;	// Left limit switch
 const char PIN_RightLimitSwitch  = 26;	// Right limit switch
 const char PIN_StepperMotorFault = 17;	// Stepper motor fault (NOT USED NOW)
@@ -71,17 +74,62 @@ const char PIN_StepperMotorDir    = 14;	// Stepper motor direction
 /**
  * @brief Declare the system parameters
  */
-const int STEPPER_MOTOR_STEP_DELAY = 20000; // Stepper motor step delay in microseconds
-const float ABSOLUTE_ANGLE_TOLERANCE = 0; // Absolute angle tolerance in degrees
-const int STEPPER_MOTOR_STEPS_AUTO = 1; // Stepper motor steps in automatic mode
-const int MAXIMUM_ANGLE_AUTO = 25; // Maximum angle in automatic mode
-const int MINIMUM_ANGLE_AUTO = -25; // Minimum angle in automatic mode
+const int MAN_STEP_DELAY 	  = 20000; 	// Stepper motor step delay in microseconds
+const int AUTO_MAX_ANGLE      = 25; 	// Maximum angle in automatic mode
+const int AUTO_MIN_ANGLE      = -25; 	// Minimum angle in automatic mode
+const int AUTO_MIN_STEP_DELAY = 20000; 	// Minimum step delay in microseconds
+const int AUTO_MAX_STEP_DELAY = 100000; // Maximum step delay in microseconds
 
 /**
  * @brief Declare the global variables
  */
-float desiredAngle = 0.0;	// Desired angle to move the mirrors
-float currentAngle = 0.0;	// Current angle of the mirrors
+bool manualMode = false;		// Manual mode flag
+bool leftLimitSwitch = false;	// Left limit switch flag
+bool rightLimitSwitch = false;	// Right limit switch flag
+bool turnCW = false;			// Turn Clockwise flag
+bool turnCCW = false;			// Turn Counter Clockwise flag
+float desiredAngle = 0.0;		// Desired angle of the mirrors
+float currentAngle = 0.0;		// Current angle of the mirrors
+
+/**
+ * @brief Interrupt Service Routine (ISR) for the left limit switch
+ */
+void IRAM_ATTR leftLimitSwitchISR(void)
+{
+	leftLimitSwitch = digitalRead(PIN_LeftLimitSwitch) == LOW;
+}
+
+/**
+ * @brief Interrupt Service Routine (ISR) for the right limit switch
+ */
+void IRAM_ATTR rightLimitSwitchISR(void)
+{
+	rightLimitSwitch = digitalRead(PIN_RightLimitSwitch) == LOW;
+}
+
+/**
+ * @brief Interrupt Service Routine (ISR) for the manual mode switch
+ */
+void IRAM_ATTR manualModeSwitchISR(void)
+{
+	manualMode = digitalRead(PIN_ManualModeSwitch) == LOW;
+}
+
+/**
+ * @brief Interrupt Service Routine (ISR) for the manual CW button
+ */
+void IRAM_ATTR manualCWButtonISR(void)
+{
+	turnCW = digitalRead(PIN_ManualCWButton) == LOW;
+}
+
+/**
+ * @brief Interrupt Service Routine (ISR) for the manual CCW button
+ */
+void IRAM_ATTR manualCCWButtonISR(void)
+{
+	turnCCW = digitalRead(PIN_ManualCCWButton) == LOW;
+}
 
 /**
  * @brief Setup the GPIO pins
@@ -102,95 +150,82 @@ void setupGPIO(void)
 	pinMode(PIN_SystemFaultLed,		OUTPUT);
 	pinMode(PIN_StepperMotorStep, 	OUTPUT);
 	pinMode(PIN_StepperMotorDir, 	OUTPUT);
-	// pinMode(PIN_StepperMotorEnable,	OUTPUT);
+
+	// Attach the interrupts
+	attachInterrupt(PIN_LeftLimitSwitch,  leftLimitSwitchISR,  CHANGE);
+	attachInterrupt(PIN_RightLimitSwitch, rightLimitSwitchISR, CHANGE);
+	attachInterrupt(PIN_ManualModeSwitch, manualModeSwitchISR, CHANGE);
+	attachInterrupt(PIN_ManualCWButton,   manualCWButtonISR,   CHANGE);
+	attachInterrupt(PIN_ManualCCWButton,  manualCCWButtonISR,  CHANGE);
 }
 
-// Inicializa Wi-Fi
-void initWiFi() {
+/**
+ * @brief Task to handle the WiFi connection
+ * 
+ * @param param 
+ */
+void taskWiFi(void* param) {
+    if (!WiFi.config(ipaddr, gateway, subnet)) {
+        DEBUG_PRINTLN("Failed to configure Static IP.");
+    }
     WiFi.begin(ssid, password);
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
-    }
-    Serial.println("Wi-Fi conectado!");
-}
-
-// Inicializa MQTT
-void initMQTT() {
-	return;
-    MQTT.setServer(mqttBroker, 1883);
-    while (!MQTT.connected()) {
-        Serial.println("Conectando ao broker MQTT...");
-        if (MQTT.connect("ESP32Client_aafk")) {
-            Serial.println("Conectado ao broker MQTT!");
-        } else {
-            delay(1000);
+    while (true) {
+        if (WiFi.status() != WL_CONNECTED) {
+            DEBUG_PRINTLN("Reconnecting to Wi-Fi...");
+            WiFi.begin(ssid, password);
         }
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
 
 /**
- * @brief Setup the WiFi connection
+ * @brief Task to handle the MQTT connection
+ * 
+ * @param param
  */
-void setupWiFi(void)
-{
-	WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK); // Set the minimum security for the WiFi network
-	WiFi.setHostname("fresnel-esp");  		// Set the hostname for the WiFi network
-	WiFi.begin(ssid, password); 			// Connect to the network
+void taskMQTT(void* param) {
+    MQTTClient.setServer(mqttBroker, mqttPort);
+    MQTTClient.setCallback([](char* topic, byte* payload, unsigned int length) {
+        char message[length + 1];
+        memcpy(message, payload, length);
+        message[length] = '\0';
+        desiredAngle = atof(message);
+        desiredAngle = constrain(desiredAngle, AUTO_MIN_ANGLE, AUTO_MAX_ANGLE);
+        DEBUG_PRINT("Desired angle updated: ");
+        DEBUG_PRINTLN(desiredAngle);
+    });
+
+    while (true) {
+        if (!MQTTClient.connected()) {
+            DEBUG_PRINTLN("Connecting to MQTT broker...");
+            if (MQTTClient.connect(hostname)) {
+                MQTTClient.subscribe(mqttSubsTopic);
+                DEBUG_PRINTLN("MQTT connected!");
+            } else {
+                DEBUG_PRINTLN("Failed to connect to MQTTClient.");
+                vTaskDelay(2000 / portTICK_PERIOD_MS);
+            }
+        }
+        MQTTClient.loop();
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
 }
 
 /**
- * @brief Check if the manual mode switch is enabled
+ * @brief Task to handle the MPU6050 sensor
+ * 
+ * @param param
  */
-bool isManualMode(void)
-{
-	return !digitalRead(PIN_ManualModeSwitch);
-}
+void taskMPU(void* param) {
+    mpu.begin();
+    mpu.setRollCalibration(11.23);
 
-/**
- * @brief Check if the calibration mode button is pressed
-*/
-bool isCalibrationMode(void)
-{
-	return !digitalRead(PIN_CalibrationMode);
-}
-
-void setupMPU6050(void)
-{	
-	mpu.begin();
-	mpu.setRollCalibration(11.23);
-}
-
-/**
- * @brief Read the MPU6050 sensor
- */
-void readMPU6050()
-{	
-	mpu.readSensors();
-	currentAngle = mpu.getRollAngle();
-	DEBUG_PRINT("Roll Angle: ");DEBUG_PRINTLN(currentAngle);
-}
-
-/**
- * @brief Check the WiFi status and reconnect if necessary
- */
-void checkWiFiStatus(void)
-{
-	static unsigned long currTime, prevTime;
-	
-	currTime = millis();
-
-	if (currTime - prevTime < 200) {
-		return;
-	}
-
-	if (WiFi.status() == WL_CONNECTED) {
-		digitalWrite(PIN_WiFiStatusLed, HIGH);
-	} else {
-		digitalWrite(PIN_WiFiStatusLed, !digitalRead(PIN_WiFiStatusLed));
-	}
-
-	prevTime = currTime;
+    while (true) {
+        mpu.readSensors();
+        currentAngle = mpu.getRollAngle();
+        DEBUG_PRINT("Current angle: "); DEBUG_PRINTLN(currentAngle);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    }
 }
 
 /**
@@ -198,52 +233,12 @@ void checkWiFiStatus(void)
  * @param pin The pin to pulse
  * @param period The period time
 */
-void pulsePin(int pin, int period = STEPPER_MOTOR_STEP_DELAY)
+void pulsePin(int pin, int period = MAN_STEP_DELAY)
 {
 	digitalWrite(pin, HIGH);
 	delayMicroseconds(period/2);
 	digitalWrite(pin, LOW);
 	delayMicroseconds(period/2);
-}
-
-/**
- * @brief Check if the left limit switch is pressed
- */
-bool isLeftLimitSwitchPressed(void)
-{
-	return !digitalRead(PIN_LeftLimitSwitch);
-}
-
-/**
- * @brief Check if the left limit switch is pressed
- */
-bool isRightLimitSwitchPressed(void)
-{
-	return !digitalRead(PIN_RightLimitSwitch);
-}
-
-/**
- * @brief Check if the stepper motor is in fault
- */
-bool isStepperMotorFault(void)
-{
-	return !digitalRead(PIN_StepperMotorFault);
-}
-
-/**
- * @brief Check if the manual left button is pressed
- */
-bool isCWButtonPressed(void)
-{
-	return !digitalRead(PIN_ManualCWButton);
-}
-
-/**
- * @brief Check if the manual right button is pressed
- */
-bool isCCWButtonPressed(void)
-{
-	return !digitalRead(PIN_ManualCCWButton);
 }
 
 /**
@@ -265,137 +260,65 @@ void blinkLedFault(void)
 }
 
 /**
- * @brief Check for any faults
- * @return true if any fault is detected, false otherwise
+ * @brief Turn the stepper motor to Clockwise (CW)
+ * 
+ * @param stepDelay The step delay in microseconds
  */
-bool isAnyFaultDetected(void)
+void turnStepperMotorCW(int stepDelay = MAN_STEP_DELAY)
 {
-	if (isStepperMotorFault() ||
-		isLeftLimitSwitchPressed() ||
-		isRightLimitSwitchPressed()) {
-		blinkLedFault();
-		return true;
-	} else {
-		digitalWrite(PIN_SystemFaultLed, LOW);
-		return false;
-	}
-}
-
-/**
- * @brief Turn the stepper motor to CW
- */
-void turnStepperMotorCW(void)
-{
-	if(isLeftLimitSwitchPressed()) {
+	if(leftLimitSwitch) {
 		DEBUG_PRINTLN("Left Limit Switch Pressed");
 		blinkLedFault();
 		return;
 	}
-	// DEBUG_PRINTLN("Turning Motor CW");
+	DEBUG_PRINTLN("Turning Motor CW");
 	pulsePin(PIN_StepperMotorStep);
 }
 
 /**
- * @brief Turn the stepper motor to CCW
+ * @brief Turn the stepper motor to Counter Clockwise (CCW)
+ * 
+ * @param stepDelay The step delay in microseconds
  */
-void turnStepperMotorCCW(void)
+void turnStepperMotorCCW(int stepDelay = MAN_STEP_DELAY)
 {
-	if(isRightLimitSwitchPressed()) {
+	if(rightLimitSwitch) {
 		DEBUG_PRINTLN("Right Limit Switch Pressed");
 		blinkLedFault();
 		return;
 	}
-	// DEBUG_PRINTLN("Turning Motor CCW");
+	DEBUG_PRINTLN("Turning Motor CCW");
 	pulsePin(PIN_StepperMotorDir);
 }
 
 /**
- * @brief Callback function when MQTT message is received
- * @param topic The MQTT topic
- * @param message The message content
+ * @brief Calculate the step delay based on the error
+ * 
+ * @param error The error value
+ * @return The step delay
  */
-void mqttCallback(char* topic, byte* message, unsigned int length) {
-    char msg[length + 1];
-    for (int i = 0; i < length; i++) {
-        msg[i] = (char)message[i];
-    }
-    msg[length] = '\0';
-
-    desiredAngle = atof(msg);
-
-	if (desiredAngle > MAXIMUM_ANGLE_AUTO) {
-		desiredAngle = MAXIMUM_ANGLE_AUTO;
-	} else if (desiredAngle < MINIMUM_ANGLE_AUTO) {
-		desiredAngle = MINIMUM_ANGLE_AUTO;
-	}
-
-    DEBUG_PRINT("Received Sun Position: ");
-    DEBUG_PRINTLN(desiredAngle);
+int calculateStepDelay(float error) {
+    int delay = map(error, 0, AUTO_MAX_ANGLE - AUTO_MIN_ANGLE, AUTO_MIN_STEP_DELAY, AUTO_MAX_STEP_DELAY);
+    return constrain(delay, AUTO_MIN_STEP_DELAY, AUTO_MAX_STEP_DELAY);
 }
 
-void setupMQTT(void)
-{
-	return;
-	MQTT.setServer(mqttBroker, mqttPort);
-	MQTT.subscribe(mqttSubsTopic);
-	MQTT.setCallback(mqttCallback);
-}
-
-/**
- * @brief Check the MQTT status and reconnect if necessary
- */
-void checkMQTT(void)
-{
-	return;
-    if (!MQTT.connected()) {
-        DEBUG_PRINTLN("MQTT not connected, reconnecting...");
-        if (MQTT.connect("FresnelController")) {
-            MQTT.subscribe(mqttSubsTopic);
-			MQTT.loop();
-				// DEBUG_PRINTLN("MQTT connected");
-        } else {
-            DEBUG_PRINTLN("MQTT connection failed, retrying...");
-        }
-    }
-}
-
-/**
- * @brief Move the mirrors to the desired position
- */
-void moveMirrorsToPosition(void)
-{
-	float minAcceptableAngle = desiredAngle - ABSOLUTE_ANGLE_TOLERANCE;
-	float maxAcceptableAngle = desiredAngle + ABSOLUTE_ANGLE_TOLERANCE;
-
-	if (currentAngle >= minAcceptableAngle && currentAngle <= maxAcceptableAngle) {
-		DEBUG_PRINTLN("Mirrors are already in the desired position");
-		return;
-	}
-
-	if (currentAngle > MAXIMUM_ANGLE_AUTO - ABSOLUTE_ANGLE_TOLERANCE || 
-		currentAngle < MINIMUM_ANGLE_AUTO + ABSOLUTE_ANGLE_TOLERANCE) {
-		DEBUG_PRINTLN("Mirrors are in the limit position");
-		return;
-	}
-
+void moveToPositionIncremental() {
 	DEBUG_PRINT("Desired Angle: ");DEBUG_PRINT(desiredAngle);DEBUG_PRINT(" | Current Angle: ");DEBUG_PRINTLN(currentAngle);
 
-	if (desiredAngle > currentAngle) {
-		DEBUG_PRINTLN("Moving motor CW");
-    	for (int i = 0; i < STEPPER_MOTOR_STEPS_AUTO; i++) {         
-			turnStepperMotorCW();
-        }
-		return;
-    } 
-	
-	if (desiredAngle < currentAngle) {
-        DEBUG_PRINTLN("Moving motor CCW");
-        for (int i = 0; i < STEPPER_MOTOR_STEPS_AUTO; i++) {
-			turnStepperMotorCCW();
-		}
-		return;
+    if (abs(currentAngle - desiredAngle)) {
+        float error = abs(desiredAngle - currentAngle);
+        int stepDelay = calculateStepDelay(error);
+
+        if (desiredAngle > currentAngle) {
+    		turnStepperMotorCW(stepDelay);
+		} else {
+			turnStepperMotorCCW(stepDelay);
+    	}
+    } else {
+        DEBUG_PRINTLN("Target position reached.");
     }
 }
+
 
 /**
  * @brief Setup the board
@@ -406,11 +329,9 @@ void setup(void)
 
 	setupGPIO();
 
-	// initWiFi();
-
-	// initMQTT();
-
-	setupMPU6050();
+    xTaskCreate(taskWiFi, "WiFi Task", 2048, NULL, 1, NULL);
+    xTaskCreate(taskMQTT, "MQTT Task", 2048, NULL, 1, NULL);
+    xTaskCreate(taskMPU, "MPU Task", 2048, NULL, 1, NULL);
 }
 
 /**
@@ -418,33 +339,22 @@ void setup(void)
  */
 void loop(void)
 {
-	// checkWiFiStatus();
-
-	// checkMQTT();
-
-	if (isManualMode()) { /* Manual Mode */
-		DEBUG_PRINT("Manual Mode | "); 
-		readMPU6050();
-		if (isCWButtonPressed() && isCCWButtonPressed()) {
+	if (manualMode) { 
+		/* Manual Mode */
+		if (turnCW && turnCCW) {
 			DEBUG_PRINTLN("Both buttons pressed");
-			return;
+		} else {
+			if (turnCW) {
+				turnStepperMotorCW();
+			} else if (turnCCW) {
+				turnStepperMotorCCW();
+			}
 		}
-
-		if (isCWButtonPressed()) {
-			DEBUG_PRINTLN("Turning Motor CW");
-			turnStepperMotorCW();
-		}
-		
-		if (isCCWButtonPressed()) {
-			DEBUG_PRINTLN("Turning Motor CCW");
-			turnStepperMotorCCW();
-		}
-	} else { /* Automatic Mode */
-		DEBUG_PRINT("Automatic Mode | ");
-		readMPU6050();
-		moveMirrorsToPosition();
+	} else { 
+		/* Automatic Mode */
+		moveToPositionIncremental();
 	}
-	delay(1);
+	vTaskDelay(10 / portTICK_PERIOD_MS);
 }
 
 
