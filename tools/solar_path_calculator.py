@@ -28,7 +28,7 @@ graph with sunrise and sunset markers.
 LONGITUDE = '-51.15282805318066'
 LATITUDE = '-29.792892732889147'
 TIMEZONE = 'America/Sao_Paulo'
-MQTT_BROKER = '192.168.16.115'  # Replace with your MQTT broker address
+MQTT_BROKER = '4.3.2.1'
 MQTT_PORT = 1883
 MQTT_TOPIC = 'desired-angle'
 
@@ -49,7 +49,7 @@ client.connect(MQTT_BROKER, MQTT_PORT, 60)
 def calculate_solar_angles(lat, lon, local_datetime, timezone_str=None):
     """
     Calculate the solar elevation and azimuth angles for a given location and datetime.
-    
+
     :param lat: Latitude of the location in degrees (string)
     :param lon: Longitude of the location in degrees (string)
     :param local_datetime: Local datetime object
@@ -64,7 +64,7 @@ def calculate_solar_angles(lat, lon, local_datetime, timezone_str=None):
     if timezone_str is None:
         timezone_str = pytz.localzone().zone
     local_tz = pytz.timezone(timezone_str)
-    
+
     # Convert local time to UTC
     local_datetime = local_tz.localize(local_datetime)
     observer.date = local_datetime.astimezone(pytz.utc)
@@ -79,7 +79,7 @@ def calculate_solar_angles(lat, lon, local_datetime, timezone_str=None):
 def plot_solar_angles(lat, lon, local_datetime, timezone_str=None):
     """
     Generate a graph of solar elevation and azimuth angles throughout the day.
-    
+
     :param lat: Latitude of the location in degrees (string)
     :param lon: Longitude of the location in degrees (string)
     :param local_datetime: Local datetime object
@@ -130,7 +130,7 @@ def plot_solar_angles(lat, lon, local_datetime, timezone_str=None):
     plt.axhline(y=0, color='r', linestyle='--')  # Add a line at y=0
     plt.axvline(x=sunrise_time, color='orange', linestyle='--', label=f'Sunrise ({sunrise_str})')
     plt.axvline(x=sunset_time, color='purple', linestyle='--', label=f'Sunset ({sunset_str})')
-    
+
     plt.xlim(0, 24)  # Set x-axis limits
     plt.ylim(-180, 180) # Set y-axis limits
 
@@ -140,7 +140,7 @@ def plot_solar_angles(lat, lon, local_datetime, timezone_str=None):
 def get_current_solar_angles(lat, lon, timezone_str=None):
     """
     Get the current solar elevation and azimuth angles.
-    
+
     :param lat: Latitude of the location in degrees (string)
     :param lon: Longitude of the location in degrees (string)
     :param timezone_str: Timezone string (optional; if None, uses system timezone)
@@ -148,7 +148,7 @@ def get_current_solar_angles(lat, lon, timezone_str=None):
     """
     current_datetime = datetime.now()
     elevation, azimuth = calculate_solar_angles(lat, lon, current_datetime, timezone_str)
-    
+
     return elevation, azimuth
 
 def publish_solar_angles(lat, lon, timezone_str=None):
@@ -157,12 +157,12 @@ def publish_solar_angles(lat, lon, timezone_str=None):
         # Get current solar angles
         current_elevation, current_azimuth = get_current_solar_angles(lat, lon, timezone_str)
 
-        # Publish the angles as a message in JSON format
-        message = f'{{"elevation": {current_elevation:.2f}, "azimuth": {current_azimuth:.2f}}}'
-        print(message)
+        # Publish the azimuth as a message
+        message = f'{current_azimuth:.2f}'
+        print(f'Current Azimuth: {message}', flush=True)
 
         client.publish(MQTT_TOPIC, message)
-        
+
         # Wait for 1 minute
         time.sleep(60)
 
