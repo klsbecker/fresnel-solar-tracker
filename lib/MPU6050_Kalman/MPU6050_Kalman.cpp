@@ -44,9 +44,9 @@ void MPU6050_Kalman::readSensors() {
     int16_t accYLSB = Wire.read() << 8 | Wire.read();
     int16_t accZLSB = Wire.read() << 8 | Wire.read();
 
-    _accX = (float)accXLSB / 4096.0 - 0.1;
-    _accY = (float)accYLSB / 4096.0 + 0.078;
-    _accZ = (float)accZLSB / 4096.0 - 0.1;
+    _accX = (float)accXLSB / 4096.0 ;
+    _accY = (float)accYLSB / 4096.0 ;
+    _accZ = (float)accZLSB / 4096.0 ;
 
     _angleRoll = atan(_accX / sqrt(_accY * _accY + _accZ * _accZ)) * RAD_TO_DEG;
 

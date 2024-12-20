@@ -75,21 +75,21 @@ const char PIN_StepperMotorDir    = 14;	// Stepper motor direction
  * @brief Declare the system parameters
  */
 const int MAN_STEP_DELAY 	  = 20000; 	// Stepper motor step delay in microseconds
-const int AUTO_MAX_ANGLE      = 25; 	// Maximum angle in automatic mode
-const int AUTO_MIN_ANGLE      = -25; 	// Minimum angle in automatic mode
+const int AUTO_MAX_ANGLE      = 15; 	// Maximum angle in automatic mode
+const int AUTO_MIN_ANGLE      = -15; 	// Minimum angle in automatic mode
 const int AUTO_MIN_STEP_DELAY = 20000; 	// Minimum step delay in microseconds
 const int AUTO_MAX_STEP_DELAY = 100000; // Maximum step delay in microseconds
 
 /**
  * @brief Declare the global variables
  */
-bool manualMode = false;		// Manual mode flag
-bool leftLimitSwitch = false;	// Left limit switch flag
-bool rightLimitSwitch = false;	// Right limit switch flag
-bool turnCW = false;			// Turn Clockwise flag
-bool turnCCW = false;			// Turn Counter Clockwise flag
-float desiredAngle = 0.0;		// Desired angle of the mirrors
-float currentAngle = 0.0;		// Current angle of the mirrors
+bool manualMode;			// Manual mode flag
+bool leftLimitSwitch;		// Left limit switch flag
+bool rightLimitSwitch;		// Right limit switch flag
+bool turnCW;				// Turn Clockwise flag
+bool turnCCW;				// Turn Counter Clockwise flag
+float desiredAngle = 0.0;	// Desired angle of the mirrors
+float currentAngle = 0.0;	// Current angle of the mirrors
 
 /**
  * @brief Interrupt Service Routine (ISR) for the left limit switch
@@ -138,10 +138,15 @@ void setupGPIO(void)
 {
 	// Setup the INPUTS pins
 	pinMode(PIN_ManualModeSwitch, 	INPUT_PULLUP);
+	manualMode = !digitalRead(PIN_ManualModeSwitch);
 	pinMode(PIN_ManualCWButton, 	INPUT_PULLUP);
+	turnCW = !digitalRead(PIN_ManualCWButton);
 	pinMode(PIN_ManualCCWButton, 	INPUT_PULLUP);
+	turnCCW = !digitalRead(PIN_ManualCCWButton);
 	pinMode(PIN_LeftLimitSwitch, 	INPUT_PULLUP);
+	leftLimitSwitch = !digitalRead(PIN_LeftLimitSwitch);
 	pinMode(PIN_RightLimitSwitch, 	INPUT_PULLUP);
+	rightLimitSwitch = !digitalRead(PIN_RightLimitSwitch);
 	pinMode(PIN_StepperMotorFault, 	INPUT_PULLUP);
 	pinMode(PIN_CalibrationMode, 	INPUT_PULLUP);
 
@@ -235,6 +240,7 @@ void taskMPU(void* param) {
 */
 void pulsePin(int pin, int period = MAN_STEP_DELAY)
 {
+	DEBUG_PRINT("PERIOD: ");DEBUG_PRINTLN(period);
 	digitalWrite(pin, HIGH);
 	delayMicroseconds(period/2);
 	digitalWrite(pin, LOW);
@@ -272,7 +278,7 @@ void turnStepperMotorCW(int stepDelay = MAN_STEP_DELAY)
 		return;
 	}
 	DEBUG_PRINTLN("Turning Motor CW");
-	pulsePin(PIN_StepperMotorStep);
+	pulsePin(PIN_StepperMotorStep, stepDelay);
 }
 
 /**
@@ -288,7 +294,7 @@ void turnStepperMotorCCW(int stepDelay = MAN_STEP_DELAY)
 		return;
 	}
 	DEBUG_PRINTLN("Turning Motor CCW");
-	pulsePin(PIN_StepperMotorDir);
+	pulsePin(PIN_StepperMotorDir, stepDelay);
 }
 
 /**
@@ -298,8 +304,11 @@ void turnStepperMotorCCW(int stepDelay = MAN_STEP_DELAY)
  * @return The step delay
  */
 int calculateStepDelay(float error) {
-    int delay = map(error, 0, AUTO_MAX_ANGLE - AUTO_MIN_ANGLE, AUTO_MIN_STEP_DELAY, AUTO_MAX_STEP_DELAY);
-    return constrain(delay, AUTO_MIN_STEP_DELAY, AUTO_MAX_STEP_DELAY);
+	if (error < (AUTO_MAX_ANGLE - AUTO_MIN_ANGLE) * 25 / 100) {
+		return map(error * 100, 0, (AUTO_MAX_ANGLE - AUTO_MIN_ANGLE) * 25, AUTO_MAX_STEP_DELAY, AUTO_MIN_STEP_DELAY);
+	} else {
+		return AUTO_MIN_STEP_DELAY;
+	}
 }
 
 void moveToPositionIncremental() {
@@ -354,7 +363,6 @@ void loop(void)
 		/* Automatic Mode */
 		moveToPositionIncremental();
 	}
-	vTaskDelay(10 / portTICK_PERIOD_MS);
 }
 
 
