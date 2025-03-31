@@ -18,7 +18,8 @@
 #include <PubSubClient.h>
 #include <Wire.h>
 #include <errno.h>
-#include <MPU6050_Kalman.h>
+#include <A1332.h>
+#include <SigmaClipping.h>
 
 #define __DEBUG__
 
@@ -32,7 +33,6 @@
 
 WiFiClient WifiClient;
 PubSubClient MQTTClient(WifiClient);
-MPU6050_Kalman mpu;
 
 /**
  * @brief Declare the WiFi parameters
@@ -79,6 +79,9 @@ const int AUTO_MAX_ANGLE      = 15; 	// Maximum angle in automatic mode
 const int AUTO_MIN_ANGLE      = -15; 	// Minimum angle in automatic mode
 const int AUTO_MIN_STEP_DELAY = 20000; 	// Minimum step delay in microseconds
 const int AUTO_MAX_STEP_DELAY = 100000; // Maximum step delay in microseconds
+const int NUM_OF_SAMPLES 	  = 100;	// Number of angle samples
+const int SAMPLE_PERIOD		  = 10; 	// Period between readings in milliseconds
+const float OFFSET_ANGLE	  = 0;		// Angle calibration offset
 
 /**
  * @brief Declare the global variables
@@ -217,19 +220,27 @@ void taskMQTT(void* param) {
 }
 
 /**
- * @brief Task to handle the MPU6050 sensor
+ * @brief Task to handle the A1332 sensor
  * 
  * @param param
  */
-void taskMPU(void* param) {
-    mpu.begin();
-    mpu.setRollCalibration(11.23);
+void taskAngle(void* param) {
+    static float angles[NUM_OF_SAMPLES];
+    int sampleIndex = 0;
 
     while (true) {
-        mpu.readSensors();
-        currentAngle = mpu.getRollAngle();
-        DEBUG_PRINT("Current angle: "); DEBUG_PRINTLN(currentAngle);
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+		// Get the samples
+        for (sampleIndex = 0; sampleIndex < NUM_OF_SAMPLES; sampleIndex++) {
+            angles[sampleIndex] = A1332_GetAngle();
+            vTaskDelay(SAMPLE_PERIOD / portTICK_PERIOD_MS);
+        }
+
+
+        // Apply Sigma Clipping
+        float filteredAngle = SigmaClipping::filter(angles, sampleIndex);
+
+		currentAngle = filteredAngle + OFFSET_ANGLE;
+		DEBUG_PRINT("Current Angle: "); DEBUG_PRINTLN(currentAngle);
     }
 }
 
@@ -334,13 +345,14 @@ void moveToPositionIncremental() {
  */
 void setup(void)
 {
+	Wire.begin();
 	Serial.begin(115200);
 
 	setupGPIO();
 
     xTaskCreate(taskWiFi, "WiFi Task", 2048, NULL, 1, NULL);
     xTaskCreate(taskMQTT, "MQTT Task", 2048, NULL, 1, NULL);
-    xTaskCreate(taskMPU, "MPU Task", 2048, NULL, 1, NULL);
+    xTaskCreate(taskAngle, "MPU Task", 2048, NULL, 1, NULL);
 }
 
 /**
