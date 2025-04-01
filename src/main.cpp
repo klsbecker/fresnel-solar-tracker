@@ -204,7 +204,7 @@ void taskMQTT(void* param) {
     });
 
     while (true) {
-        if (!MQTTClient.connected()) {
+        if (WiFi.status() == WL_CONNECTED && !MQTTClient.connected()) {
             DEBUG_PRINTLN("Connecting to MQTT broker...");
             if (MQTTClient.connect(hostname)) {
                 MQTTClient.subscribe(mqttSubsTopic);
