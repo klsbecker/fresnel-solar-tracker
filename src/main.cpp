@@ -59,21 +59,21 @@ const char *mqttPubsTopic = "current-angle";// MQTT publication topic
 /**
  * @brief Declare the INPUT pins
  */
-const char PIN_ManualModeSwitch  = 12;	// Manual mode switch
-const char PIN_ManualCWButton    = 32;	// Manual CW button
-const char PIN_ManualCCWButton   = 33;	// Manual CCW button
-const char PIN_LeftLimitSwitch   = 25;	// Left limit switch
-const char PIN_RightLimitSwitch  = 26;	// Right limit switch
+const char PIN_ManualModeSwitch  = 34;	// Manual mode switch
+const char PIN_ManualCWButton    = 35;	// Manual CW button
+const char PIN_ManualCCWButton   = 32;	// Manual CCW button
+const char PIN_LeftLimitSwitch   = 33;	// Left limit switch
+const char PIN_RightLimitSwitch  = 25;	// Right limit switch
 const char PIN_StepperMotorFault = 17;	// Stepper motor fault (NOT USED NOW)
 const char PIN_CalibrationMode	 = 23; 	// Calibration mode button (NOT USED NOW)
 
 /**
  * @brief Declare the OUTPUT pins
  */
-const char PIN_WiFiStatusLed      = 4;	// WiFi status LED (NOT USED NOW)
+const char PIN_WiFiStatusLed      = 25;	// WiFi status LED (NOT USED NOW)
 const char PIN_SystemFaultLed     = 2;	// System fault LED
-const char PIN_StepperMotorStep   = 27;	// Stepper motor step
-const char PIN_StepperMotorDir    = 14;	// Stepper motor direction
+const char PIN_StepperMotorStep   = 26;	// Stepper motor step
+const char PIN_StepperMotorDir    = 27;	// Stepper motor direction
 
 /**
  * @brief Declare the system parameters
