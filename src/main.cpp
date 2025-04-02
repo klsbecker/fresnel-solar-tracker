@@ -85,7 +85,7 @@ const int AUTO_MIN_STEP_DELAY = 20000; 	// Minimum step delay in microseconds
 const int AUTO_MAX_STEP_DELAY = 100000; // Maximum step delay in microseconds
 const int NUM_OF_SAMPLES 	  = 100;	// Number of angle samples
 const int SAMPLE_PERIOD		  = 10; 	// Period between readings in milliseconds
-const float OFFSET_ANGLE	  = 0;		// Angle calibration offset
+const float OFFSET_ANGLE	  = -246.53;		// Angle calibration offset
 
 /**
  * @brief Declare the global variables
@@ -204,7 +204,6 @@ void taskMQTT(void* param) {
         memcpy(message, payload, length);
         message[length] = '\0';
         desiredAngle = atof(message);
-        desiredAngle = constrain(desiredAngle, AUTO_MIN_ANGLE, AUTO_MAX_ANGLE);
         DEBUG_PRINT("Desired angle updated: ");
         DEBUG_PRINTLN(desiredAngle);
     });

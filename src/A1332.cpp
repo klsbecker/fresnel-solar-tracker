@@ -6,7 +6,9 @@ float A1332_GetAngle( void ) {
     int msb, lsb, raw;
 
     // transmit (platform-dependent)
-    Wire.requestFrom(A1332_ADDR, 2);
+    if (Wire.requestFrom(A1332_ADDR, 2) != 2)
+        return A1332_ANGVAL_ERR;
+
     msb = Wire.read();
     lsb = Wire.read();
 
