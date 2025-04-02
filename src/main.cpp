@@ -20,6 +20,8 @@
 #include <errno.h>
 #include <A1332.h>
 #include <SigmaClipping.h>
+#include <SSD1306.h>
+#include "freertos/semphr.h"
 
 #define __DEBUG__
 
@@ -33,6 +35,8 @@
 
 WiFiClient WifiClient;
 PubSubClient MQTTClient(WifiClient);
+SemaphoreHandle_t i2cMutex;
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 /**
  * @brief Declare the WiFi parameters
@@ -91,6 +95,8 @@ bool leftLimitSwitch;		// Left limit switch flag
 bool rightLimitSwitch;		// Right limit switch flag
 bool turnCW;				// Turn Clockwise flag
 bool turnCCW;				// Turn Counter Clockwise flag
+bool turnCWAuto;			// Turn Clockwise flag in automatic mode
+bool turnCCWAuto;			// Turn Counter Clockwise flag in automatic mode
 float desiredAngle = 0.0;	// Desired angle of the mirrors
 float currentAngle = 0.0;	// Current angle of the mirrors
 
@@ -231,16 +237,73 @@ void taskAngle(void* param) {
     while (true) {
 		// Get the samples
         for (sampleIndex = 0; sampleIndex < NUM_OF_SAMPLES; sampleIndex++) {
-            angles[sampleIndex] = A1332_GetAngle();
-            vTaskDelay(SAMPLE_PERIOD / portTICK_PERIOD_MS);
+			do {
+				if (xSemaphoreTake(i2cMutex, portMAX_DELAY) == pdTRUE) {
+					angles[sampleIndex] = A1332_GetAngle();
+					xSemaphoreGive(i2cMutex);
+				}
+				vTaskDelay(SAMPLE_PERIOD / portTICK_PERIOD_MS);
+			} while (angles[sampleIndex] == A1332_ANGVAL_ERR);
         }
-
 
         // Apply Sigma Clipping
         float filteredAngle = SigmaClipping::filter(angles, sampleIndex);
 
 		currentAngle = filteredAngle + OFFSET_ANGLE;
 		DEBUG_PRINT("Current Angle: "); DEBUG_PRINTLN(currentAngle);
+    }
+}
+
+void taskDisplay(void *parameter) {
+    if (xSemaphoreTake(i2cMutex, portMAX_DELAY) == pdTRUE) {
+        display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+        display.clearDisplay();
+        display.setTextSize(1);
+        display.setTextColor(SSD1306_WHITE);
+        display.setRotation(2);
+        display.display();
+        xSemaphoreGive(i2cMutex);
+    }
+
+    while (true) {
+        if (xSemaphoreTake(i2cMutex, portMAX_DELAY) == pdTRUE) {
+            display.clearDisplay();
+
+            display.setCursor(0, 0);
+            display.print("Target: ");
+            display.print(desiredAngle, 1);
+            display.print(" deg");
+
+            display.setCursor(0, 10);
+            display.print("Current: ");
+            display.print(currentAngle, 1);
+            display.print(" deg");
+
+            display.setCursor(0, 20);
+            display.print("Mode: ");
+            display.print(manualMode ? "MANUAL" : "AUTO");
+
+            display.setCursor(0, 30);
+            if (turnCCW || turnCCWAuto) {
+                display.print("Moving: LEFT");
+            } else if (turnCW || turnCWAuto) {
+                display.print("Moving: RIGHT");
+            } else {
+                display.print("Moving: STOPPED");
+            }
+
+            display.setCursor(0, 40);
+            display.print("Limit L: ");
+            display.print(leftLimitSwitch ? "PRESSED" : "OK");
+
+            display.setCursor(0, 50);
+            display.print("Limit R: ");
+            display.print(rightLimitSwitch ? "PRESSED" : "OK");
+
+            display.display();
+            xSemaphoreGive(i2cMutex);
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
 
@@ -330,11 +393,16 @@ void moveToPositionIncremental() {
         int stepDelay = calculateStepDelay(error);
 
         if (desiredAngle > currentAngle) {
+			turnCWAuto = true;
     		turnStepperMotorCW(stepDelay);
 		} else {
+			turnCCWAuto = true;
 			turnStepperMotorCCW(stepDelay);
     	}
     } else {
+		turnCWAuto = false;
+		turnCCWAuto = false;
+
         DEBUG_PRINTLN("Target position reached.");
     }
 }
@@ -350,9 +418,12 @@ void setup(void)
 
 	setupGPIO();
 
+	i2cMutex = xSemaphoreCreateMutex();
+
     xTaskCreate(taskWiFi, "WiFi Task", 2048, NULL, 1, NULL);
     xTaskCreate(taskMQTT, "MQTT Task", 2048, NULL, 1, NULL);
     xTaskCreate(taskAngle, "MPU Task", 2048, NULL, 1, NULL);
+	xTaskCreate(taskDisplay, "Display Task", 2048, NULL, 1, NULL);
 }
 
 /**
@@ -362,6 +433,9 @@ void loop(void)
 {
 	if (manualMode) { 
 		/* Manual Mode */
+		turnCWAuto = false;
+		turnCCWAuto = false;
+
 		if (turnCW && turnCCW) {
 			DEBUG_PRINTLN("Both buttons pressed");
 		} else {
