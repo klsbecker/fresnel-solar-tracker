@@ -172,8 +172,8 @@ def publish_solar_angles(lat, lon, timezone_str=None):
 
         client.publish(MQTT_TOPIC, message)
 
-        # Wait for 1 minute
-        time.sleep(60)
+        # Wait for 10 seconds
+        time.sleep(10)
 
 # Main script execution
 if __name__ == "__main__":
