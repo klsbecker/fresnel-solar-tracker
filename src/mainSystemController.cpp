@@ -18,8 +18,6 @@
 #include <PubSubClient.h>
 #include <Wire.h>
 #include <errno.h>
-#include <A1332.h>
-#include <SigmaClipping.h>
 #include <SSD1306.h>
 #include "freertos/semphr.h"
 
@@ -51,10 +49,10 @@ const IPAddress subnet(255, 255, 255, 0); 	// WiFi network subnet
 /**
  * @brief Declare the MQTT parameters
  */
-const int mqttPort = 1883;					// MQTT broker port
-const char *mqttBroker = "4.3.2.1";			// MQTT broker address
-const char *mqttSubsTopic = "desired-angle";// MQTT subscription topic
-const char *mqttPubsTopic = "current-angle";// MQTT publication topic
+const int mqttPort = 1883;								// MQTT broker port
+const char *mqttBroker = "4.3.2.1";						// MQTT broker address
+const char *mqttSubsTopicDesiredAngle = "desired-angle";// MQTT subscription topic
+const char *mqttSubsTopicCurrentAngle = "current-angle";// MQTT publication topic
 
 /**
  * @brief Declare the INPUT pins
@@ -203,16 +201,24 @@ void taskMQTT(void* param) {
         char message[length + 1];
         memcpy(message, payload, length);
         message[length] = '\0';
-        desiredAngle = atof(message);
-        DEBUG_PRINT("Desired angle updated: ");
-        DEBUG_PRINTLN(desiredAngle);
+
+		if (strcmp(topic, mqttSubsTopicCurrentAngle) == 0) {
+			currentAngle = atof(message);
+			DEBUG_PRINT("Current angle updated: ");
+			DEBUG_PRINTLN(currentAngle);
+		} else if (strcmp(topic, mqttSubsTopicDesiredAngle) == 0) {
+			desiredAngle = atof(message);
+			DEBUG_PRINT("Desired angle updated: ");
+			DEBUG_PRINTLN(desiredAngle);
+		}
     });
 
     while (true) {
         if (WiFi.status() == WL_CONNECTED && !MQTTClient.connected()) {
             DEBUG_PRINTLN("Connecting to MQTT broker...");
             if (MQTTClient.connect(hostname)) {
-                MQTTClient.subscribe(mqttSubsTopic);
+                MQTTClient.subscribe(mqttSubsTopicDesiredAngle);
+				MQTTClient.subscribe(mqttSubsTopicCurrentAngle);
                 DEBUG_PRINTLN("MQTT connected!");
             } else {
                 DEBUG_PRINTLN("Failed to connect to MQTTClient.");
@@ -221,35 +227,6 @@ void taskMQTT(void* param) {
         }
         MQTTClient.loop();
         vTaskDelay(10 / portTICK_PERIOD_MS);
-    }
-}
-
-/**
- * @brief Task to handle the A1332 sensor
- * 
- * @param param
- */
-void taskAngle(void* param) {
-    static float angles[NUM_OF_SAMPLES];
-    int sampleIndex = 0;
-
-    while (true) {
-		// Get the samples
-        for (sampleIndex = 0; sampleIndex < NUM_OF_SAMPLES; sampleIndex++) {
-			do {
-				if (xSemaphoreTake(i2cMutex, portMAX_DELAY) == pdTRUE) {
-					angles[sampleIndex] = A1332_GetAngle();
-					xSemaphoreGive(i2cMutex);
-				}
-				vTaskDelay(SAMPLE_PERIOD / portTICK_PERIOD_MS);
-			} while (angles[sampleIndex] == A1332_ANGVAL_ERR);
-        }
-
-        // Apply Sigma Clipping
-        float filteredAngle = SigmaClipping::filter(angles, sampleIndex);
-
-		currentAngle = filteredAngle + OFFSET_ANGLE;
-		DEBUG_PRINT("Current Angle: "); DEBUG_PRINTLN(currentAngle);
     }
 }
 
@@ -421,7 +398,6 @@ void setup(void)
 
     xTaskCreate(taskWiFi, "WiFi Task", 2048, NULL, 1, NULL);
     xTaskCreate(taskMQTT, "MQTT Task", 2048, NULL, 1, NULL);
-    xTaskCreate(taskAngle, "MPU Task", 2048, NULL, 1, NULL);
 	xTaskCreate(taskDisplay, "Display Task", 2048, NULL, 1, NULL);
 }
 
