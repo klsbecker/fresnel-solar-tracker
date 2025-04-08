@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "fresnel-mirror-controller"
+		},
+		{
+			"path": "fresnel-angle-dispatcher"
+		},
+		{
+			"path": "fresnel-solar-calculator"
+		}
+	],
+	"settings": {}
+}
