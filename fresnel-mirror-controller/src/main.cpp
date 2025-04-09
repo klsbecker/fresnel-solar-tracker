@@ -41,7 +41,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
  */
 const char *ssid = "fresnel-pi"; 			// WiFi network name
 const char *password = "12345678"; 			// WiFi network password
-const char *hostname = "fresnel-esp"; 		// WiFi network hostname
+const char *hostname = "fresnel-controller"; 		// WiFi network hostname
 const IPAddress ipaddr(4, 3, 2, 2); 		// WiFi network IP address
 const IPAddress gateway(4, 3, 2, 1); 		// WiFi network gateway
 const IPAddress subnet(255, 255, 255, 0); 	// WiFi network subnet
