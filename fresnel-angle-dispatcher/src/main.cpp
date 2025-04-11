@@ -145,7 +145,7 @@ void taskAngle(void* param) {
 			MQTTClient.publish(mqttPubsTopicCurrentAngle, message);
 			DEBUG_PRINT("Current angle published: "); DEBUG_PRINTLN(currentAngle);
 		} else {
-			DEBUG_PRINTLN("MQTT not connected, not publishing current angle: "); DEBUG_PRINTLN(currentAngle);
+			DEBUG_PRINT("MQTT not connected, not publishing current angle: "); DEBUG_PRINTLN(currentAngle);
 		}
 
 		// Wait for a while before taking the next sample
