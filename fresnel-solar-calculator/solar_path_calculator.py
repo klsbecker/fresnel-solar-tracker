@@ -173,12 +173,97 @@ def publish_solar_angles(lat, lon, timezone_str=None):
         client.publish(MQTT_TOPIC, message)
 
         # Wait for 10 seconds
-        time.sleep(10)
+        time.sleep(10)    
 
+
+n = datetime.now().timetuple().tm_yday #dia do ano
+t = datetime.now()
+
+TO = t.hour*60 + t.minute + t.second/60
+
+# print(TO)
+
+#Constantes
+N = 365 #numero de dias do ano
+Qn = -2.015 #para o espelho 8
+H = 3.11 #altura do absorvedor
+phi = -29.7608 #latitude
+Lst = 45 #Latitude de UTC-3, horario oficial
+Lloc = 51.1522
+
+def theta_n(Qn, H, lambdaa):
+    return (np.arctan(Qn/H) + lambdaa)/2
+
+def lambdaa(theta_z, gamma_m): #OK
+    return np.arctan(np.sin(theta_z)*np.sin(gamma_m)/np.cos(theta_z))
+
+def theta_z(phi, delta, omega): #OK
+    phi = np.deg2rad(phi)
+    delta = np.deg2rad(delta)
+    omega = np.deg2rad(omega)
+    
+    cos_theta_z = np.cos(phi)*np.cos(delta)*np.cos(omega) + np.sin(phi)*np.sin(delta)
+    return np.arccos(cos_theta_z)
+
+def gamma_m(omega, theta_z, phi, delta): #OK
+    omega = np.deg2rad(omega)
+    phi = np.deg2rad(phi)
+    delta = np.deg2rad(delta)
+    
+    return np.sign(omega)*abs(np.arccos((np.cos(theta_z)*np.sin(phi)-np.sin(delta))/(np.sin(theta_z)*np.cos(phi))))
+
+def delta(Gamma_M): #OK
+    Gamma_M = np.deg2rad(Gamma_M)
+    
+    return (0.006918 - 0.399912*np.cos(Gamma_M) + 0.070257*np.sin(Gamma_M) - 0.006758*np.cos(2*Gamma_M) + 0.000907*np.sin(2*Gamma_M) - 0.0022697*np.cos(3*Gamma_M) + 0.00148*np.sin(3*Gamma_M))*180/np.pi
+
+def Gamma_M(n, N): #OK
+    return (n-1)*(360/N)
+
+def omega(TSV): #OK
+    return (TSV - 12)*15
+
+def TSV(TO, Lst, Lloc, Et): #OK
+    return (TO + 4*(Lst - Lloc) + Et)/60
+
+def Et(Gamma_M): #OK
+    Gamma_M = np.deg2rad(Gamma_M)
+    
+    return (0.000075 + 0.001868*np.cos(Gamma_M) - 0.032077*np.sin(Gamma_M) - 0.014615*np.cos(2*Gamma_M) - 0.04089*np.sin(2*Gamma_M))*(229.18)
+
+def publish_solar_angles_2():
+    while True:
+        Gamma_M_linha = Gamma_M(n,N)
+        # print('Gamma_M_linha', Gamma_M_linha)
+        delta_linha = delta(Gamma_M_linha)
+        # print('delta_linha', delta_linha)
+        Et_linha = Et(Gamma_M_linha)
+        # print('Et_linha', Et_linha)
+        TSV_linha = TSV(TO, Lst, Lloc, Et_linha)
+        # print('TSV_linha', TSV_linha)
+        omega_linha = omega(TSV_linha)
+        # print('omega_linha', omega_linha)
+        theta_z_linha = theta_z(phi, delta_linha, omega_linha)
+        # print('theta_z_linha', theta_z_linha)
+        gamma_m_linha = gamma_m(omega_linha, theta_z_linha, phi, delta_linha)
+        # print('gamma_m_linha', gamma_m_linha)
+        lambdaa_linha = lambdaa(theta_z_linha, gamma_m_linha)
+        # print('lambdaa_linha', lambdaa_linha)
+
+        desired_angle = np.rad2deg(theta_n(Qn, H, lambdaa_linha))
+
+        message = f'{desired_angle:.2f}'
+        print(f'Desired Angle: {message}', flush=True)
+
+        client.publish(MQTT_TOPIC, message)
+
+        time.sleep(10)
+        
 # Main script execution
 if __name__ == "__main__":
     # Start MQTT client loop in a separate thread
     client.loop_start()
 
     # Start publishing solar angles
-    publish_solar_angles(LATITUDE, LONGITUDE, TIMEZONE)
+    # publish_solar_angles(LATITUDE, LONGITUDE, TIMEZONE)
+    publish_solar_angles_2()
