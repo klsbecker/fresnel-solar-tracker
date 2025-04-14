@@ -7,6 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import paho.mqtt.client as mqtt
 import time
+import argparse
 
 """
 Linear Fresnel Solar Tracker
@@ -24,29 +25,28 @@ graph with sunrise and sunset markers.
 
 """
 
-# Constants
-LONGITUDE = '-51.15282805318066'
-LATITUDE = '-29.792892732889147'
-TIMEZONE = 'America/Sao_Paulo'
-MQTT_BROKER = '4.3.2.1'
-MQTT_PORT = 1883
-MQTT_TOPIC = 'desired-angle'
+# --- SYSTEM PARAMETERS ---
+LONGITUDE = '-51.15282805318066'# Longitude of the site (degrees) used only for plotting
+LATITUDE = '-29.792892732889147'# Latitude of the site (degrees) used only for plotting
+Qn = 0                          # Horizontal distance between mirror and the absorber (m)
+H = 3.11                        # Height of the absorber relative to the mirror plane (m)
+phi = -29.7608                  # Site latitude (degrees), negative for southern hemisphere
+Lst = 45                        # Standard meridian longitude for time zone (degrees, UTC-3)
+Lloc = 51.1522                  # Local longitude (degrees)
+N = 365                         # Total number of days in a year
+TIMEZONE = 'America/Sao_Paulo'  # Timezone string
 
-
-# MQTT client setup
-client = mqtt.Client()
+# --- MQTT PARAMETERS ---
+MQTT_BROKER = '4.3.2.1'         # MQTT broker address
+MQTT_PORT = 1883                # MQTT broker port
+MQTT_TOPIC = 'desired-angle'    # MQTT topic to publish to
 
 def on_connect(client, userdata, flags, rc):
     """Callback for successful MQTT connection"""
     print(f"Connected to MQTT broker with result code {rc}")
     client.subscribe(MQTT_TOPIC)
 
-client.on_connect = on_connect
-
-# Connect to the broker
-client.connect(MQTT_BROKER, MQTT_PORT, 60)
-
-def calculate_solar_angles(lat, lon, local_datetime, timezone_str=None):
+def calculate_elevation_azimuth(lat, lon, local_datetime, timezone_str=None):
     """
     Calculate the solar elevation and azimuth angles for a given location and datetime.
 
@@ -88,13 +88,16 @@ def plot_solar_angles(lat, lon, local_datetime, timezone_str=None):
     hours = np.arange(0, 24, 1/60)  # Calculate angles every minute
     azimuths = []
     elevations = []
+    desired_angles = []
 
     # Calculate angles for each minute of the day
     for hour in hours:
         datetime_current = local_datetime.replace(hour=int(hour), minute=int((hour % 1) * 60), second=0, microsecond=0)
-        elevation, azimuth = calculate_solar_angles(lat, lon, datetime_current, timezone_str)
+        elevation, azimuth = calculate_elevation_azimuth(lat, lon, datetime_current, timezone_str)
         azimuths.append(azimuth)
         elevations.append(elevation)
+        desired_angle = calculate_mirror_angle_from_datetime(datetime_current)
+        desired_angles.append(desired_angle)
 
     # Convert lists to numpy arrays
     elevations = np.array(elevations)
@@ -102,25 +105,25 @@ def plot_solar_angles(lat, lon, local_datetime, timezone_str=None):
     # Identify sunrise and sunset times
     sunrise_idx = np.argmin(np.abs(elevations[:len(elevations)//2]))
     sunset_idx = np.argmin(np.abs(elevations[len(elevations)//2:])) + len(elevations)//2
+    solar_noon_idx = np.argmax(elevations)
 
     sunrise_time = hours[sunrise_idx]
     sunset_time = hours[sunset_idx]
+    solar_noon_time = hours[solar_noon_idx]
 
     # Convert fractional hours to HH:MM format
     sunrise_str = (datetime.combine(local_datetime.date(), datetime.min.time()) + timedelta(hours=sunrise_time)).strftime('%H:%M')
     sunset_str = (datetime.combine(local_datetime.date(), datetime.min.time()) + timedelta(hours=sunset_time)).strftime('%H:%M')
+    solar_noon_str = (datetime.combine(local_datetime.date(), datetime.min.time()) + timedelta(hours=solar_noon_time)).strftime('%H:%M')
 
     # Plot the graph
     plt.figure(figsize=(10, 6))
     plt.plot(hours, elevations, label='Elevation', color='blue', linewidth=2)
     plt.plot(hours, azimuths, label='Azimuth', color='green', linewidth=2)
+    plt.plot(hours, desired_angles, label='Desired Angle', color='gray', linewidth=2)
 
-    # Add points for sunrise and sunset
-    plt.scatter([sunrise_time, sunset_time], [0, 0], color='red', zorder=5)
-
-    # Annotate sunrise and sunset times
-    plt.text(sunrise_time, 0, f'Sunrise\n{sunrise_str}', color='orange', ha='center', va='bottom', fontsize=10, fontweight='bold')
-    plt.text(sunset_time, 0, f'Sunset\n{sunset_str}', color='purple', ha='center', va='bottom', fontsize=10, fontweight='bold')
+    # Add points for sunrise, sunset, and solar noon
+    plt.scatter([sunrise_time, sunset_time, solar_noon_time], [0, 0, 0], color='red', zorder=5)
 
     plt.xlabel('Hour of the day', fontsize=12)
     plt.ylabel('Angle in degrees', fontsize=12)
@@ -130,6 +133,7 @@ def plot_solar_angles(lat, lon, local_datetime, timezone_str=None):
     plt.axhline(y=0, color='r', linestyle='--')  # Add a line at y=0
     plt.axvline(x=sunrise_time, color='orange', linestyle='--', label=f'Sunrise ({sunrise_str})')
     plt.axvline(x=sunset_time, color='purple', linestyle='--', label=f'Sunset ({sunset_str})')
+    plt.axvline(x=solar_noon_time, color='blue', linestyle='--', label=f'Solar Noon ({solar_noon_str})')
 
     plt.xlim(0, 24)  # Set x-axis limits
     plt.ylim(-180, 180) # Set y-axis limits
@@ -137,133 +141,209 @@ def plot_solar_angles(lat, lon, local_datetime, timezone_str=None):
     plt.legend(loc='upper left', fontsize=10)
     plt.show()
 
-def get_current_solar_angles(lat, lon, timezone_str=None):
+
+def calculate_Gamma(day_of_year: int) -> float:
     """
-    Get the current solar elevation and azimuth angles.
-
-    :param lat: Latitude of the location in degrees (string)
-    :param lon: Longitude of the location in degrees (string)
-    :param timezone_str: Timezone string (optional; if None, uses system timezone)
-    :return: Tuple containing the current solar elevation and azimuth angles in degrees
+    Calculate the Earth's position in its orbit (Γ) in degrees.
     """
-    current_datetime = datetime.now()
-    elevation, azimuth = calculate_solar_angles(lat, lon, current_datetime, timezone_str)
+    return (day_of_year - 1) * (360 / N)
 
-    return elevation, azimuth
+def calculate_solar_declination(Gamma: float) -> float:
+    """
+    Returns the solar declination δ (degrees) based on Gamma (orbital position).
+    """
+    G = np.deg2rad(Gamma)
+    delta_rad = (
+        0.006918 - 0.399912*np.cos(G) + 0.070257*np.sin(G)
+        - 0.006758*np.cos(2*G) + 0.000907*np.sin(2*G)
+        - 0.002697*np.cos(3*G) + 0.00148*np.sin(3*G)
+    )
+    return np.rad2deg(delta_rad)
 
-def publish_solar_angles(lat, lon, timezone_str=None):
-    """Publish current solar angles to MQTT topic every 1 minute"""
-    while True:
-        # Get current solar angles
-        current_elevation, current_azimuth = get_current_solar_angles(lat, lon, timezone_str)
+def calculate_equation_of_time(Gamma: float) -> float:
+    """
+    Returns the equation of time (Et) in minutes.
+    Represents the difference between apparent solar time and mean time.
+    """
+    G = np.deg2rad(Gamma)
+    return (
+        0.000075 + 0.001868*np.cos(G) - 0.032077*np.sin(G)
+        - 0.014615*np.cos(2*G) - 0.04089*np.sin(2*G)
+    ) * 229.18
 
-        # Ignore the negative values
-        current_elevation = 90 - np.clip(current_elevation, 0, 90)
+def calculate_true_solar_time(TO: float, Et: float) -> float:
+    """
+    Returns the True Solar Time (TST) in hours.
+    TO = local clock time in minutes.
+    """
+    return (TO + 4*(Lst - Lloc) + Et) / 60
 
-        # Convert the angle as necessary
-        desired_angle = current_elevation if current_azimuth < 0 else -current_elevation
+def calculate_hour_angle(TST: float) -> float:
+    """
+    Returns the hour angle ω (degrees), where 0° = solar noon.
+    """
+    return (TST - 12) * 15
 
-        # Calculate the angle of the center mirror
-        desired_angle = desired_angle / 2
-
-        # Publish the elevation as a message
-        message = f'{desired_angle:.2f}'
-        print(f'Desired Angle: {message}', flush=True)
-
-        client.publish(MQTT_TOPIC, message)
-
-        # Wait for 10 seconds
-        time.sleep(10)    
-
-
-n = datetime.now().timetuple().tm_yday #dia do ano
-t = datetime.now()
-
-TO = t.hour*60 + t.minute + t.second/60
-
-# print(TO)
-
-#Constantes
-N = 365 #numero de dias do ano
-Qn = -2.015 #para o espelho 8
-H = 3.11 #altura do absorvedor
-phi = -29.7608 #latitude
-Lst = 45 #Latitude de UTC-3, horario oficial
-Lloc = 51.1522
-
-def theta_n(Qn, H, lambdaa):
-    return (np.arctan(Qn/H) + lambdaa)/2
-
-def lambdaa(theta_z, gamma_m): #OK
-    return np.arctan(np.sin(theta_z)*np.sin(gamma_m)/np.cos(theta_z))
-
-def theta_z(phi, delta, omega): #OK
-    phi = np.deg2rad(phi)
-    delta = np.deg2rad(delta)
-    omega = np.deg2rad(omega)
-    
-    cos_theta_z = np.cos(phi)*np.cos(delta)*np.cos(omega) + np.sin(phi)*np.sin(delta)
+def calculate_zenith_angle(phi: float, delta: float, omega: float) -> float:
+    """
+    Returns the solar zenith angle θz (rad), angle between the Sun and the zenith.
+    """
+    phi_rad = np.deg2rad(phi)
+    delta_rad = np.deg2rad(delta)
+    omega_rad = np.deg2rad(omega)
+    cos_theta_z = (
+        np.cos(phi_rad)*np.cos(delta_rad)*np.cos(omega_rad) +
+        np.sin(phi_rad)*np.sin(delta_rad)
+    )
     return np.arccos(cos_theta_z)
 
-def gamma_m(omega, theta_z, phi, delta): #OK
-    omega = np.deg2rad(omega)
-    phi = np.deg2rad(phi)
-    delta = np.deg2rad(delta)
-    
-    return np.sign(omega)*abs(np.arccos((np.cos(theta_z)*np.sin(phi)-np.sin(delta))/(np.sin(theta_z)*np.cos(phi))))
+def calculate_solar_azimuth(phi: float, delta: float, omega: float, theta_z: float) -> float:
+    """
+    Returns the solar azimuth angle γm (rad), measured from the south (in the southern hemisphere).
+    """
+    omega_rad = np.deg2rad(omega)
+    phi_rad = np.deg2rad(phi)
+    delta_rad = np.deg2rad(delta)
+    numerator = np.cos(theta_z)*np.sin(phi_rad) - np.sin(delta_rad)
+    denominator = np.sin(theta_z)*np.cos(phi_rad)
+    return np.sign(omega_rad) * abs(np.arccos(numerator / denominator))
 
-def delta(Gamma_M): #OK
-    Gamma_M = np.deg2rad(Gamma_M)
-    
-    return (0.006918 - 0.399912*np.cos(Gamma_M) + 0.070257*np.sin(Gamma_M) - 0.006758*np.cos(2*Gamma_M) + 0.000907*np.sin(2*Gamma_M) - 0.0022697*np.cos(3*Gamma_M) + 0.00148*np.sin(3*Gamma_M))*180/np.pi
+def calculate_lambdaa(theta_z: float, gamma_m: float) -> float:
+    """
+    Calculates the angle of incidence λ between the solar beam and the mirror plane.
+    """
+    return np.arctan(np.sin(theta_z) * np.sin(gamma_m) / np.cos(theta_z))
 
-def Gamma_M(n, N): #OK
-    return (n-1)*(360/N)
+def calculate_mirror_angle(Qn: float, H: float, lambdaa: float) -> float:
+    """
+    Calculates the mirror tilt angle to reflect sunlight to the absorber.
+    """
+    return (np.arctan(Qn / H) + lambdaa) / 2
 
-def omega(TSV): #OK
-    return (TSV - 12)*15
+def calculate_mirror_angle_from_datetime(dt: datetime) -> float:
+    """
+    Main function: returns the optimal mirror angle (in degrees)
+    for a given local datetime.
+    """
+    day_of_year = dt.timetuple().tm_yday
+    TO = dt.hour * 60 + dt.minute + dt.second / 60  # local time in minutes
 
-def TSV(TO, Lst, Lloc, Et): #OK
-    return (TO + 4*(Lst - Lloc) + Et)/60
+    Gamma = calculate_Gamma(day_of_year)
+    delta = calculate_solar_declination(Gamma)
+    Et = calculate_equation_of_time(Gamma)
+    TST = calculate_true_solar_time(TO, Et)
+    omega = calculate_hour_angle(TST)
+    theta_z = calculate_zenith_angle(phi, delta, omega)
+    gamma_m = calculate_solar_azimuth(phi, delta, omega, theta_z)
+    lambdaa = calculate_lambdaa(theta_z, gamma_m)
+    mirror_rad = calculate_mirror_angle(Qn, H, lambdaa)
 
-def Et(Gamma_M): #OK
-    Gamma_M = np.deg2rad(Gamma_M)
-    
-    return (0.000075 + 0.001868*np.cos(Gamma_M) - 0.032077*np.sin(Gamma_M) - 0.014615*np.cos(2*Gamma_M) - 0.04089*np.sin(2*Gamma_M))*(229.18)
+    return np.rad2deg(mirror_rad)
 
-def publish_solar_angles_2():
-    while True:
-        Gamma_M_linha = Gamma_M(n,N)
-        # print('Gamma_M_linha', Gamma_M_linha)
-        delta_linha = delta(Gamma_M_linha)
-        # print('delta_linha', delta_linha)
-        Et_linha = Et(Gamma_M_linha)
-        # print('Et_linha', Et_linha)
-        TSV_linha = TSV(TO, Lst, Lloc, Et_linha)
-        # print('TSV_linha', TSV_linha)
-        omega_linha = omega(TSV_linha)
-        # print('omega_linha', omega_linha)
-        theta_z_linha = theta_z(phi, delta_linha, omega_linha)
-        # print('theta_z_linha', theta_z_linha)
-        gamma_m_linha = gamma_m(omega_linha, theta_z_linha, phi, delta_linha)
-        # print('gamma_m_linha', gamma_m_linha)
-        lambdaa_linha = lambdaa(theta_z_linha, gamma_m_linha)
-        # print('lambdaa_linha', lambdaa_linha)
+def main():
+    # Create argument parser
+    parser = argparse.ArgumentParser(description='Calculate solar angle for heliostat.')
+    parser.add_argument('--mode', choices=['plot', 'mqtt', 'show'], default='plot', 
+                        help='Mode of operation: plot, mqtt, or show')
 
-        desired_angle = np.rad2deg(theta_n(Qn, H, lambdaa_linha))
+    # Parse the arguments
+    args = parser.parse_args()
 
-        message = f'{desired_angle:.2f}'
-        print(f'Desired Angle: {message}', flush=True)
+    # Logic based on the passed argument
+    if args.mode == 'plot':
+        print("Running in plot mode")
 
-        client.publish(MQTT_TOPIC, message)
+        plot_solar_angles(LATITUDE, LONGITUDE, datetime.now(), TIMEZONE)
+    elif args.mode == 'mqtt':
+        print("Running in MQTT mode")
 
-        time.sleep(10)
+        # MQTT client setup
+        client = mqtt.Client()
+
+        # Set the on_connect callback
+        client.on_connect = lambda client, userdata, flags, rc: (
+            print(f"Connected to MQTT broker with result code {rc}"),
+            client.subscribe(MQTT_TOPIC)
+        )
+
+        # Connect to the broker
+        try:
+            client.connect(MQTT_BROKER, MQTT_PORT, 60)
+            client.loop_start()
+        except Exception as e:
+            print(f"Failed to connect to MQTT broker: {e}")
+
+        while True:
+            desired_angle = calculate_mirror_angle_from_datetime(datetime.now())
+            print(f"Desired angle: {desired_angle:.2f} degrees")
+            if not client.is_connected():
+                print("Disconnected from MQTT broker, retrying...")
+                try:
+                    client.reconnect()
+                except Exception as e:
+                    print(f"Failed to reconnect: {e}")
+            else:
+                client.publish(MQTT_TOPIC, desired_angle)
+            time.sleep(5)
         
-# Main script execution
-if __name__ == "__main__":
-    # Start MQTT client loop in a separate thread
-    client.loop_start()
+        # Stop the loop and disconnect from the broker
+        client.loop_stop()
+    elif args.mode == 'show':
+        while True:
+            desired_angle = calculate_mirror_angle_from_datetime(datetime.now())
+def main():
+    # Argument parser
+    parser = argparse.ArgumentParser(description='Calculate solar angle for heliostat.')
+    parser.add_argument('--mode', choices=['plot', 'mqtt', 'show'], default='plot',
+                        help='Mode of operation: plot, mqtt, or show')
+    args = parser.parse_args()
 
-    # Start publishing solar angles
-    # publish_solar_angles(LATITUDE, LONGITUDE, TIMEZONE)
-    publish_solar_angles_2()
+    if args.mode == 'plot':
+        print("Running in plot mode")
+        plot_solar_angles(LATITUDE, LONGITUDE, datetime.now(), TIMEZONE)
+
+    elif args.mode == 'mqtt':
+        print("Running in MQTT mode")
+
+        client = mqtt.Client()
+
+        client.on_connect = lambda client, userdata, flags, rc: (
+            print(f"Connected to MQTT broker with result code {rc}"),
+            client.subscribe(MQTT_TOPIC)
+        )
+
+        def connect_mqtt():
+            try:
+                client.connect(MQTT_BROKER, MQTT_PORT, 60)
+                client.loop_start()
+            except Exception as e:
+                print(f"Failed to connect to MQTT broker: {e}")
+
+        connect_mqtt()
+
+        while True:
+            desired_angle = calculate_mirror_angle_from_datetime(datetime.now())
+            print(f"Desired angle: {desired_angle:.2f} degrees")
+            if not client.is_connected():
+                print("Disconnected from MQTT broker, retrying...")
+                try:
+                    connect_mqtt()
+                except Exception as e:
+                    print(f"Reconnect failed: {e}")
+                time.sleep(5)
+                continue
+            try:
+                client.publish(MQTT_TOPIC, desired_angle)
+            except Exception as e:
+                print(f"Failed to publish: {e}")
+            time.sleep(5)
+
+    elif args.mode == 'show':
+        print("Running in show mode")
+        while True:
+            desired_angle = calculate_mirror_angle_from_datetime(datetime.now())
+            print(f"Desired angle: {desired_angle:.2f} degrees")
+            time.sleep(5)
+
+if __name__ == '__main__':
+    main()
