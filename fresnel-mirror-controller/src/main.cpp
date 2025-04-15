@@ -76,14 +76,7 @@ const char PIN_StepperMotorDir    = 27;	// Stepper motor direction
 /**
  * @brief Declare the system parameters
  */
-const int MAN_STEP_DELAY 	  = 20000; 	// Stepper motor step delay in microseconds
-const int AUTO_MAX_ANGLE      = 15; 	// Maximum angle in automatic mode
-const int AUTO_MIN_ANGLE      = -15; 	// Minimum angle in automatic mode
-const int AUTO_MIN_STEP_DELAY = 20000; 	// Minimum step delay in microseconds
-const int AUTO_MAX_STEP_DELAY = 100000; // Maximum step delay in microseconds
-const int NUM_OF_SAMPLES 	  = 100;	// Number of angle samples
-const int SAMPLE_PERIOD		  = 10; 	// Period between readings in milliseconds
-const float OFFSET_ANGLE	  = -246.53;		// Angle calibration offset
+const int DEFAULT_STEP_DELAY = 20000; // Default stepper motor step delay in microseconds
 
 /**
  * @brief Declare the global variables
@@ -288,7 +281,7 @@ void taskDisplay(void *parameter) {
  * @param pin The pin to pulse
  * @param period The period time
 */
-void pulsePin(int pin, int period = MAN_STEP_DELAY)
+void pulsePin(int pin, int period = DEFAULT_STEP_DELAY)
 {
 	DEBUG_PRINT("PERIOD: ");DEBUG_PRINTLN(period);
 	digitalWrite(pin, HIGH);
@@ -320,7 +313,7 @@ void blinkLedFault(void)
  * 
  * @param stepDelay The step delay in microseconds
  */
-void turnStepperMotorCW(int stepDelay = MAN_STEP_DELAY)
+void turnStepperMotorCW(int stepDelay = DEFAULT_STEP_DELAY)
 {
 	if(leftLimitSwitch) {
 		DEBUG_PRINTLN("Left Limit Switch Pressed");
@@ -336,7 +329,7 @@ void turnStepperMotorCW(int stepDelay = MAN_STEP_DELAY)
  * 
  * @param stepDelay The step delay in microseconds
  */
-void turnStepperMotorCCW(int stepDelay = MAN_STEP_DELAY)
+void turnStepperMotorCCW(int stepDelay = DEFAULT_STEP_DELAY)
 {
 	if(rightLimitSwitch) {
 		DEBUG_PRINTLN("Right Limit Switch Pressed");
@@ -347,33 +340,16 @@ void turnStepperMotorCCW(int stepDelay = MAN_STEP_DELAY)
 	pulsePin(PIN_StepperMotorDir, stepDelay);
 }
 
-/**
- * @brief Calculate the step delay based on the error
- * 
- * @param error The error value
- * @return The step delay
- */
-int calculateStepDelay(float error) {
-	if (error < (AUTO_MAX_ANGLE - AUTO_MIN_ANGLE) * 25 / 100) {
-		return map(error * 100, 0, (AUTO_MAX_ANGLE - AUTO_MIN_ANGLE) * 25, AUTO_MAX_STEP_DELAY, AUTO_MIN_STEP_DELAY);
-	} else {
-		return AUTO_MIN_STEP_DELAY;
-	}
-}
-
 void moveToPositionIncremental() {
 	DEBUG_PRINT("Desired Angle: ");DEBUG_PRINT(desiredAngle);DEBUG_PRINT(" | Current Angle: ");DEBUG_PRINTLN(currentAngle);
 
     if (abs(currentAngle - desiredAngle)) {
-        float error = abs(desiredAngle - currentAngle);
-        int stepDelay = calculateStepDelay(error);
-
         if (desiredAngle > currentAngle) {
 			turnCWAuto = true;
-    		turnStepperMotorCW(stepDelay);
+			turnStepperMotorCW();
 		} else {
 			turnCCWAuto = true;
-			turnStepperMotorCCW(stepDelay);
+			turnStepperMotorCCW();
     	}
     } else {
 		turnCWAuto = false;
