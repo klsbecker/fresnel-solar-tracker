@@ -241,60 +241,9 @@ def calculate_mirror_angle_from_datetime(dt: datetime) -> float:
     return np.rad2deg(mirror_rad)
 
 def main():
-    # Create argument parser
-    parser = argparse.ArgumentParser(description='Calculate solar angle for heliostat.')
-    parser.add_argument('--mode', choices=['plot', 'mqtt', 'show'], default='plot', 
-                        help='Mode of operation: plot, mqtt, or show')
-
-    # Parse the arguments
-    args = parser.parse_args()
-
-    # Logic based on the passed argument
-    if args.mode == 'plot':
-        print("Running in plot mode")
-
-        plot_solar_angles(LATITUDE, LONGITUDE, datetime.now(), TIMEZONE)
-    elif args.mode == 'mqtt':
-        print("Running in MQTT mode")
-
-        # MQTT client setup
-        client = mqtt.Client()
-
-        # Set the on_connect callback
-        client.on_connect = lambda client, userdata, flags, rc: (
-            print(f"Connected to MQTT broker with result code {rc}"),
-            client.subscribe(MQTT_TOPIC)
-        )
-
-        # Connect to the broker
-        try:
-            client.connect(MQTT_BROKER, MQTT_PORT, 60)
-            client.loop_start()
-        except Exception as e:
-            print(f"Failed to connect to MQTT broker: {e}")
-
-        while True:
-            desired_angle = calculate_mirror_angle_from_datetime(datetime.now())
-            print(f"Desired angle: {desired_angle:.2f} degrees")
-            if not client.is_connected():
-                print("Disconnected from MQTT broker, retrying...")
-                try:
-                    client.reconnect()
-                except Exception as e:
-                    print(f"Failed to reconnect: {e}")
-            else:
-                client.publish(MQTT_TOPIC, desired_angle)
-            time.sleep(5)
-        
-        # Stop the loop and disconnect from the broker
-        client.loop_stop()
-    elif args.mode == 'show':
-        while True:
-            desired_angle = calculate_mirror_angle_from_datetime(datetime.now())
-def main():
     # Argument parser
     parser = argparse.ArgumentParser(description='Calculate solar angle for heliostat.')
-    parser.add_argument('--mode', choices=['plot', 'mqtt', 'show'], default='plot',
+    parser.add_argument('--mode', choices=['plot', 'mqtt', 'show'], default='mqtt',
                         help='Mode of operation: plot, mqtt, or show')
     args = parser.parse_args()
 
@@ -333,7 +282,8 @@ def main():
                 time.sleep(5)
                 continue
             try:
-                client.publish(MQTT_TOPIC, desired_angle)
+                message = f"{desired_angle:.2f}"
+                client.publish(MQTT_TOPIC, message)
             except Exception as e:
                 print(f"Failed to publish: {e}")
             time.sleep(5)
