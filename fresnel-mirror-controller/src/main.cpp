@@ -68,7 +68,7 @@ const char PIN_CalibrationMode	 = 23; 	// Calibration mode button (NOT USED NOW)
 /**
  * @brief Declare the OUTPUT pins
  */
-const char PIN_WiFiStatusLed      = 25;	// WiFi status LED (NOT USED NOW)
+const char PIN_WiFiStatusLed      = 15;	// WiFi status LED (NOT USED NOW)
 const char PIN_SystemFaultLed     = 2;	// System fault LED
 const char PIN_StepperMotorStep   = 26;	// Stepper motor step
 const char PIN_StepperMotorDir    = 27;	// Stepper motor direction
@@ -137,13 +137,13 @@ void IRAM_ATTR manualCCWButtonISR(void)
 void setupGPIO(void)
 {
 	// Setup the INPUTS pins
-	pinMode(PIN_ManualModeSwitch, 	INPUT_PULLUP);
+	pinMode(PIN_ManualModeSwitch, 	INPUT);
 	manualMode = !digitalRead(PIN_ManualModeSwitch);
-	pinMode(PIN_ManualCWButton, 	INPUT_PULLUP);
+	pinMode(PIN_ManualCWButton, 	INPUT);
 	turnCW = !digitalRead(PIN_ManualCWButton);
-	pinMode(PIN_ManualCCWButton, 	INPUT_PULLUP);
+	pinMode(PIN_ManualCCWButton, 	INPUT);
 	turnCCW = !digitalRead(PIN_ManualCCWButton);
-	pinMode(PIN_LeftLimitSwitch, 	INPUT_PULLUP);
+	pinMode(PIN_LeftLimitSwitch, 	INPUT);
 	leftLimitSwitch = !digitalRead(PIN_LeftLimitSwitch);
 	pinMode(PIN_RightLimitSwitch, 	INPUT_PULLUP);
 	rightLimitSwitch = !digitalRead(PIN_RightLimitSwitch);
@@ -272,7 +272,7 @@ void taskDisplay(void *parameter) {
             display.display();
             xSemaphoreGive(i2cMutex);
         }
-        vTaskDelay(pdMS_TO_TICKS(500));
+        vTaskDelay(pdMS_TO_TICKS(250));
     }
 }
 
@@ -344,7 +344,10 @@ void moveToPositionIncremental() {
 	DEBUG_PRINT("Desired Angle: ");DEBUG_PRINT(desiredAngle);DEBUG_PRINT(" | Current Angle: ");DEBUG_PRINTLN(currentAngle);
 
     if (abs(currentAngle - desiredAngle)) {
-        if (desiredAngle > currentAngle) {
+        float error = abs(desiredAngle - currentAngle);
+        int stepDelay = calculateStepDelay(error);
+
+        if (desiredAngle < currentAngle) {
 			turnCWAuto = true;
 			turnStepperMotorCW();
 		} else {

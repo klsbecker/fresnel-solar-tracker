@@ -23,5 +23,5 @@ float A1332_GetAngle( void ) {
     raw = ((msb & 0x0F) << 8) + (lsb & 0xFF);
 
     // convert to angle (0 to 360 degrees)
-    return( (float)( ((double)raw * (double)360.0) / (double)4095 ) );
+    return(180 - (float)( ((double)raw * (double)360.0) / (double)4095 ) );
 }

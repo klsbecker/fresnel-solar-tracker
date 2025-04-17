@@ -61,8 +61,8 @@ const char PIN_SystemFaultLed     = 2;	// System fault LED
  * @brief Declare the system parameters
  */
 const int NUM_OF_SAMPLES 	  = 100;	// Number of angle samples
-const int SAMPLE_PERIOD		  = 10; 	// Period between readings in milliseconds
-const float OFFSET_ANGLE	  = -246.53;// Angle calibration offset
+const int SAMPLE_PERIOD		  = 1; 	// Period between readings in milliseconds
+const float OFFSET_ANGLE	  = 0; // Angle calibration offset
 
 /**
  * @brief Setup the GPIO pins
@@ -147,9 +147,6 @@ void taskAngle(void* param) {
 		} else {
 			DEBUG_PRINT("MQTT not connected, not publishing current angle: "); DEBUG_PRINTLN(currentAngle);
 		}
-
-		// Wait for a while before taking the next sample
-		vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
 
