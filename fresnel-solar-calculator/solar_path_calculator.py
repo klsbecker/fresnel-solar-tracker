@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import paho.mqtt.client as mqtt
 import time
 import argparse
+import functools
 
 """
 Linear Fresnel Solar Tracker
@@ -37,9 +38,11 @@ N = 365                         # Total number of days in a year
 TIMEZONE = 'America/Sao_Paulo'  # Timezone string
 
 # --- MQTT PARAMETERS ---
-MQTT_BROKER = '4.3.2.1'         # MQTT broker address
+MQTT_BROKER = '192.168.20.111'         # MQTT broker address
 MQTT_PORT = 1883                # MQTT broker port
 MQTT_TOPIC = 'desired-angle'    # MQTT topic to publish to
+
+print = functools.partial(print, flush=True)
 
 def on_connect(client, userdata, flags, rc):
     """Callback for successful MQTT connection"""
@@ -254,39 +257,53 @@ def main():
     elif args.mode == 'mqtt':
         print("Running in MQTT mode")
 
-        client = mqtt.Client()
+        def on_connect(client, userdata, flags, rc):
+            if rc == mqtt.CONNACK_ACCEPTED:
+                print(f"Connected to MQTT broker [{MQTT_BROKER}]")
+                client.subscribe(MQTT_TOPIC)
+            else:
+                print(f"Connection failed to MQTT broker [{MQTT_BROKER}] with code [{rc}]")
 
-        client.on_connect = lambda client, userdata, flags, rc: (
-            print(f"Connected to MQTT broker with result code {rc}"),
-            client.subscribe(MQTT_TOPIC)
-        )
+        def on_disconnect(client, userdata, flags, rc):
+            print(f"Disconnected to MQTT broker [{MQTT_BROKER}] with code [{rc}]")
 
-        def connect_mqtt():
+        client = mqtt.Client(client_id="fresnel-calculator")
+        client.on_connect = on_connect
+        client.on_disconnect = on_disconnect
+
+        def connect_client(start_loop=False):
             try:
-                client.connect(MQTT_BROKER, MQTT_PORT, 60)
-                client.loop_start()
-            except Exception as e:
-                print(f"Failed to connect to MQTT broker: {e}")
+                client.connect(MQTT_BROKER, MQTT_PORT, 5)
+                if start_loop: client.start_loop()
+                start_time = time.time()
+                while time.time() - start_time < 5 and not client.is_connected():
+                    time.sleep(0.1)
+            except:
+                pass
 
-        connect_mqtt()
+        connect_client(start_loop=True)
 
         while True:
-            desired_angle = calculate_mirror_angle_from_datetime(datetime.now())
-            print(f"Desired angle: {desired_angle:.2f} degrees")
+            start_loop_time = time.time()
+
             if not client.is_connected():
-                print("Disconnected from MQTT broker, retrying...")
-                try:
-                    connect_mqtt()
-                except Exception as e:
-                    print(f"Reconnect failed: {e}")
-                time.sleep(5)
-                continue
+                connect_client()
+
+            angle = calculate_mirror_angle_from_datetime(datetime.now())
+
             try:
-                message = f"{desired_angle:.2f}"
-                client.publish(MQTT_TOPIC, message)
+                result = client.publish(MQTT_TOPIC, f"{angle:.2f}")
+                result.wait_for_publish(timeout=1)
+                publish_status = "Published" if result.is_published() else "Not Published"
             except Exception as e:
-                print(f"Failed to publish: {e}")
-            time.sleep(5)
+                publish_status = e
+
+            print(f"Desired Angle [{angle:.2f}] - MQTT [{publish_status}]")
+
+            while time.time() - start_loop_time < 5:
+                time.sleep(0.1)
+
+        client.loop_stop()
 
     elif args.mode == 'show':
         print("Running in show mode")
